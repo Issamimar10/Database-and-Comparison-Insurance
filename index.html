@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome CDN -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- Pustaka SheetJS untuk Ekspor ke Excel -->
+    <!-- Pustaka SheetJS untuk Ekspor & Import Excel -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
     
     <style>
@@ -33,7 +33,6 @@
         .benefit-value {
             color: #4b5563;
         }
-        /* Styling untuk scrollbar custom di dropdown */
         .dropdown-content::-webkit-scrollbar {
             width: 6px;
         }
@@ -47,15 +46,22 @@
 
     <!-- Navbar Header -->
     <header class="bg-blue-900 text-white p-4 shadow-md sticky top-0 z-30">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-3">
             <h1 class="text-xl font-bold flex items-center gap-2">
-                <i class="fa-solid me-2 fa-shield-halved"></i> Insurance Database and Comparison Maker
-                <!-- Link Buka Google Sheets -->
+                <i class="fa-solid me-1 fa-shield-halved"></i> Insurance Database and Comparison Maker
+                <!-- Link Buka Master Google Sheets -->
                 <a href="https://docs.google.com/spreadsheets/d/1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI/edit" target="_blank" title="Buka Master Database" class="ml-2 text-blue-300 hover:text-white transition">
                     <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
                 </a>
             </h1>
-            <span class="text-xs bg-blue-800 px-3 py-1 rounded-full text-blue-200" id="totalProductCount">Memuat data...</span>
+            
+            <div class="flex items-center gap-3">
+                <!-- Tombol Upload Excel -->
+                <button onclick="openUploadModal()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition">
+                    <i class="fa-solid fa-file-arrow-up text-sm"></i> Upload Excel
+                </button>
+                <span class="text-xs bg-blue-800 px-3 py-1.5 rounded-full text-blue-200" id="totalProductCount">Memuat data...</span>
+            </div>
         </div>
     </header>
 
@@ -69,10 +75,9 @@
                        class="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
             </div>
 
-            <!-- Custom Multi-Select Dropdowns (Excel Style) -->
+            <!-- Custom Multi-Select Dropdowns -->
             <div class="flex flex-wrap gap-2 w-full justify-end" id="filterContainer">
                 
-                <!-- Filter Kategori (Konven/Syariah/HS) -->
                 <div class="relative custom-select">
                     <button class="w-full md:w-auto min-w-[140px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('categoryDropdown', event)">
                         <span id="categoryBtnText" class="truncate font-medium">Semua Kategori</span>
@@ -81,7 +86,6 @@
                     <div id="categoryDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
                 </div>
 
-                <!-- Filter Perusahaan -->
                 <div class="relative custom-select">
                     <button class="w-full md:w-auto min-w-[160px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('companyDropdown', event)">
                         <span id="companyBtnText" class="truncate font-medium">Semua Perusahaan</span>
@@ -90,7 +94,6 @@
                     <div id="companyDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
                 </div>
 
-                <!-- Filter Tipe Produk -->
                 <div class="relative custom-select">
                     <button class="w-full md:w-auto min-w-[160px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('typeDropdown', event)">
                         <span id="typeBtnText" class="truncate font-medium">Semua Tipe</span>
@@ -99,7 +102,6 @@
                     <div id="typeDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
                 </div>
 
-                <!-- Filter Channel -->
                 <div class="relative custom-select">
                     <button class="w-full md:w-auto min-w-[150px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('channelDropdown', event)">
                         <span id="channelBtnText" class="truncate font-medium">Semua Channel</span>
@@ -108,7 +110,6 @@
                     <div id="channelDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
                 </div>
 
-                <!-- Filter Currency -->
                 <div class="relative custom-select">
                     <button class="w-full md:w-auto min-w-[140px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('currencyDropdown', event)">
                         <span id="currencyBtnText" class="truncate font-medium">Semua Mata Uang</span>
@@ -142,6 +143,45 @@
         <button onclick="clearSelection()" class="text-gray-400 hover:text-white text-xs underline whitespace-nowrap">Batal</button>
     </div>
 
+    <!-- Modal Upload Excel ke Google Sheets -->
+    <div id="uploadModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 bg-green-700 text-white flex justify-between items-center">
+                <h3 class="font-bold text-base flex items-center gap-2">
+                    <i class="fa-solid fa-file-excel text-lg"></i> Upload Database Excel ke Google Sheets
+                </h3>
+                <button onclick="closeUploadModal()" class="text-gray-200 hover:text-white text-xl">&times;</button>
+            </div>
+            
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">Target Tab Google Sheets:</label>
+                    <select id="uploadTargetSheet" class="w-full border text-sm rounded-lg p-2.5 bg-gray-50 focus:ring-2 focus:ring-green-500 outline-none">
+                        <option value="Konven">Konven</option>
+                        <option value="Syariah">Syariah</option>
+                        <option value="HS">HS</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">Pilih File Excel (.xlsx / .xls):</label>
+                    <input type="file" id="excelFileInput" accept=".xlsx, .xls" onchange="previewExcelFile()"
+                           class="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer border rounded-lg p-1">
+                </div>
+
+                <div id="uploadPreviewArea" class="hidden bg-gray-50 p-3 rounded-lg border text-xs space-y-1 text-gray-600 max-h-36 overflow-y-auto"></div>
+
+                <div class="pt-2 flex justify-end gap-2">
+                    <button onclick="closeUploadModal()" class="px-4 py-2 border rounded-lg text-xs font-semibold text-gray-600 hover:bg-gray-100">Batal</button>
+                    <button id="btnSubmitUpload" onclick="processAndUploadExcel()" disabled
+                            class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload ke Google Sheets
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Perbandingan Side-by-Side -->
     <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -172,15 +212,16 @@
     <!-- SCRIPT LOGIKA UTAMA WEB -->
     <script>
         const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
-        const SHEET_TABS = ["Konven", "Syariah", "HS"]; // Nama tab di Google Sheets harus persis seperti ini
+        const SHEET_TABS = ["Konven", "Syariah", "HS"];
+        const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzN9HcjcNz40HuLU3FrwunOuLiJ9CB4_kvoTc9DxmckLl12pG7GQUGKkbmVtrzBnf06/exec";
 
         let products = [];
         let selectedProductIds = [];
         let currentlyVisibleProducts = []; 
+        let dynamicColumns = []; // Menyimpan semua nama kolom atribut secara dinamis
         let currentComparisonFeatures = [];
         let currentComparisonProducts = [];
 
-        // State untuk menyimpan filter ganda yang dipilih
         let activeFilters = {
             category: [],
             company: [],
@@ -189,7 +230,9 @@
             currency: []
         };
 
-        // --- SISTEM DROPDOWN MULTI-SELECT ---
+        let parsedUploadRows = [];
+
+        // --- DROPDOWN MULTI-SELECT ---
         function toggleDropdown(id, event) {
             event.stopPropagation();
             document.querySelectorAll('.dropdown-content').forEach(el => {
@@ -198,16 +241,10 @@
             document.getElementById(id).classList.toggle('hidden');
         }
 
-        // Tutup dropdown jika klik area luar
         document.addEventListener('click', (e) => {
             if (!e.target.closest('.custom-select')) {
                 document.querySelectorAll('.dropdown-content').forEach(el => el.classList.add('hidden'));
             }
-        });
-
-        // Hentikan penutupan saat mengeklik checkbox di dalam dropdown
-        document.querySelectorAll('.dropdown-content').forEach(el => {
-            el.addEventListener('click', (e) => e.stopPropagation());
         });
 
         function updateFilterState(filterKey, value, isChecked) {
@@ -274,7 +311,7 @@
         }
 
         function getChannelIcon(channelName) {
-            const channel = channelName.toLowerCase();
+            const channel = String(channelName).toLowerCase();
             if (channel.includes("bancassurance")) return "fa-building-columns";
             if (channel.includes("agency") || channel.includes("agen")) return "fa-user-tie";
             if (channel.includes("direct")) return "fa-paper-plane"; 
@@ -282,14 +319,19 @@
             return "fa-diagram-project";
         }
 
-        // --- PENARIKAN DATA BANYAK SHEET (MULTI-SHEET FETCH) ---
+        // --- LOAD DATA DARI GOOGLE SHEETS (SECARA DINAMIS) ---
         let sheetsProcessed = 0;
         let sheetsFailed = 0;
 
-        document.addEventListener("DOMContentLoaded", () => {
-            // Kita jalankan script pengambilan per tiap tab sheet secara paralel
+        function fetchAllSheetData() {
+            products = [];
+            dynamicColumns = [];
+            sheetsProcessed = 0;
+            sheetsFailed = 0;
+            document.getElementById("loadingIndicator").classList.remove("hidden");
+            document.getElementById("deckGrid").classList.add("hidden");
+
             SHEET_TABS.forEach((tabName, index) => {
-                // Buat fungsi global unik per tab
                 window[`prosesDataSheet${index}`] = function(jsonData) {
                     processSheetData(jsonData, tabName);
                     checkAllSheetsLoaded();
@@ -297,14 +339,15 @@
 
                 const script = document.createElement('script');
                 script.onerror = () => {
-                    console.warn(`Gagal memuat tab: ${tabName}. Pastikan nama tab persis ada di Sheets.`);
                     sheetsFailed++;
                     checkAllSheetsLoaded();
                 };
                 script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${encodeURIComponent(tabName)}&headers=1&tqx=responseHandler:prosesDataSheet${index}`;
                 document.body.appendChild(script);
             });
-        });
+        }
+
+        document.addEventListener("DOMContentLoaded", fetchAllSheetData);
 
         function processSheetData(jsonData, categoryName) {
             try {
@@ -316,6 +359,13 @@
                     cols = rows[0].c.map(cell => (cell && cell.v !== null && cell.v !== undefined) ? String(cell.v).trim() : "");
                     rows = rows.slice(1);
                 }
+
+                // Kumpulkan kolom dinamis baru yang belum terdaftar
+                cols.forEach(col => {
+                    if (col && !["Product Name", "Company Name", "Distribution Channel", "Currency", "Product Type", "Par/Non Par"].includes(col)) {
+                        if (!dynamicColumns.includes(col)) dynamicColumns.push(col);
+                    }
+                });
 
                 rows.forEach((row) => {
                     if (!row || !row.c) return;
@@ -333,34 +383,29 @@
 
                     if (prodName === "-" && compName === "-") return;
 
-                    products.push({
-                        id: products.length + 1, // Auto-increment ID unik global
-                        category: categoryName, // Inject kategori sumber sheet (Konven/Syariah/HS)
+                    // Buat objek produk dengan menyimpan seluruh atribut dinamis
+                    let pObj = {
+                        id: products.length + 1,
+                        category: categoryName,
                         company: compName,
                         name: prodName,
                         channel: getVal("Distribution Channel"),
                         currency: getVal("Currency"),
-                        par: getVal("Par/Non Par"),
                         productType: getVal("Product Type"),
-                        
-                        deathBenefit: getVal("Death Benefit"),
-                        accidentalBenefit: getVal("Accidental Death Benefit"),
-                        terminalIllness: getVal("Terminal Illness Benefit"),
-                        saBonus: getVal("Sum Assured Bonus"),
-                        cashPayout: getVal("Cash Payout Bonus"),
-                        maturityBenefit: getVal("Maturity Benefit"),
-                        
-                        coveragePeriod: getVal("Coverage Period") !== "-" ? getVal("Coverage Period") : getVal("Coverage Term"),
-                        ppp: getVal("Premium Payment Period (PPP)") !== "-" ? getVal("Premium Payment Period (PPP)") : getVal("Premium Term"),
-                        entryAge: getVal("Entry Age"),
-                        minPremium: getVal("Min Premium"),
-                        minSumAssured: getVal("Min Sum Assured"),
-                        underwriting: getVal("Underwriting Method"),
-                        riders: getVal("Available Riders")
+                        par: getVal("Par/Non Par"),
+                        attributes: {} // Menyimpan semua kolom benefit/fitur secara dinamis
+                    };
+
+                    cols.forEach(col => {
+                        if (col && !["Product Name", "Company Name", "Distribution Channel", "Currency", "Product Type", "Par/Non Par"].includes(col)) {
+                            pObj.attributes[col] = getVal(col);
+                        }
                     });
+
+                    products.push(pObj);
                 });
             } catch (err) {
-                console.error(`Error memproses tab ${categoryName}:`, err);
+                console.error(`Error tab ${categoryName}:`, err);
             }
         }
 
@@ -369,7 +414,7 @@
             if (sheetsProcessed + sheetsFailed === SHEET_TABS.length) {
                 if (products.length === 0) {
                     document.getElementById("loadingIndicator").innerHTML = `
-                        <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Data kosong atau tidak ada tab bernama Konven, Syariah, atau HS.</p>`;
+                        <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Data kosong atau tidak ada tab Konven, Syariah, atau HS.</p>`;
                     return;
                 }
 
@@ -393,7 +438,7 @@
         function getCategoryBadge(category) {
             if(category === "Konven") return `<span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
             if(category === "Syariah") return `<span class="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
-            return `<span class="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`; // HS
+            return `<span class="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
         }
 
         function renderDeck(data) {
@@ -411,6 +456,10 @@
                 const card = document.createElement("div");
                 card.className = `bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'} hover:shadow-md transition p-5 flex flex-col justify-between relative cursor-pointer`;
                 
+                // Cari Death Benefit atau atribut pertama untuk preview di kartu
+                let previewBenefitKey = Object.keys(p.attributes).find(k => k.toLowerCase().includes("death benefit")) || Object.keys(p.attributes)[0] || "";
+                let previewVal = previewBenefitKey ? p.attributes[previewBenefitKey] : "-";
+
                 card.innerHTML = `
                     <div>
                         <div class="flex justify-between items-start mb-2">
@@ -423,9 +472,10 @@
                         <h3 class="font-bold text-gray-800 text-base mb-1" onclick="openDetailModal(${p.id})">${p.name}</h3>
                         <p class="text-xs text-gray-500 mb-3"><i class="fa-solid ${getChannelIcon(p.channel)} me-1"></i> ${p.channel} &bull; <span class="italic">${p.productType}</span></p>
                         
+                        ${previewBenefitKey ? `
                         <div class="text-xs bg-gray-50 p-2.5 rounded-lg text-gray-600 mb-3 line-clamp-3">
-                            <strong class="text-gray-800 block">Death Benefit:</strong> ${formatListText(p.deathBenefit)}
-                        </div>
+                            <strong class="text-gray-800 block">${previewBenefitKey}:</strong> ${formatListText(previewVal)}
+                        </div>` : ''}
                     </div>
 
                     <div class="pt-3 border-t flex justify-between items-center text-xs">
@@ -439,21 +489,14 @@
             });
         }
 
-        // LOGIKA FILTER MULTI-SELECT (Logic OR/AND khusus)
         function filterData() {
             const search = document.getElementById("searchInput").value.toLowerCase();
 
             currentlyVisibleProducts = products.filter(p => {
                 const matchSearch = p.name.toLowerCase().includes(search) || p.company.toLowerCase().includes(search);
-                
-                // Jika array filter kosong, artinya tampilkan semua (True). 
-                // Jika ada isinya, cek apakah properti produk ada di dalam array filter tersebut.
                 const matchCat  = activeFilters.category.length === 0 || activeFilters.category.includes(p.category);
                 const matchComp = activeFilters.company.length === 0 || activeFilters.company.includes(p.company);
                 const matchType = activeFilters.type.length === 0 || activeFilters.type.includes(p.productType);
-                
-                // Untuk Channel dan Currency (karena datanya bisa gabungan teks "IDR & USD"), 
-                // kita gunakan 'some/includes' agar pencocokannya lebih luwes.
                 const matchChan = activeFilters.channel.length === 0 || activeFilters.channel.some(f => p.channel.includes(f));
                 const matchCurr = activeFilters.currency.length === 0 || activeFilters.currency.some(f => p.currency.includes(f));
 
@@ -499,32 +542,31 @@
             renderDeck(currentlyVisibleProducts);
         }
 
+        // --- KOMPARASI DINAMIS (Membaca seluruh atribut otomatis) ---
         function openComparisonModal() {
             const container = document.getElementById("modalTableContainer");
             currentComparisonProducts = products.filter(p => selectedProductIds.includes(p.id));
 
-            const allFeatures = [
-                { label: "Sistem Kategori", key: "category", isHighlight: false },
-                { label: "Channel Distribusi", key: "channel", isHighlight: false },
-                { label: "Tipe Produk", key: "productType", isHighlight: false },
-                { label: "Masa Pembayaran (PPP)", key: "ppp", isHighlight: false },
-                { label: "Masa Pertanggungan", key: "coveragePeriod", isHighlight: false },
-                { label: "Usia Masuk", key: "entryAge", isHighlight: false },
-                { label: "Min. Premi", key: "minPremium", isHighlight: false },
-                { label: "Min. Uang Pertanggungan", key: "minSumAssured", isHighlight: false },
-                { label: "Underwriting Method", key: "underwriting", isHighlight: false },
-                
-                { label: "Death Benefit", key: "deathBenefit", isHighlight: true },
-                { label: "Accidental Death Benefit", key: "accidentalBenefit", isHighlight: true },
-                { label: "Terminal Illness Benefit", key: "terminalIllness", isHighlight: true },
-                { label: "Sum Assured Bonus", key: "saBonus", isHighlight: true },
-                { label: "Cash Payout Bonus", key: "cashPayout", isHighlight: true },
-                { label: "Maturity Benefit", key: "maturityBenefit", isHighlight: true },
-                { label: "Available Riders", key: "riders", isHighlight: true }
+            // Daftar atribut dasar
+            let fixedFeatures = [
+                { label: "Sistem Kategori", key: "category", isAttr: false },
+                { label: "Channel Distribusi", key: "channel", isAttr: false },
+                { label: "Tipe Produk", key: "productType", isAttr: false }
             ];
 
+            // Tambahkan semua atribut dinamis dari Sheets
+            let allFeatures = [...fixedFeatures];
+            dynamicColumns.forEach(col => {
+                const isBenefit = col.toLowerCase().includes("benefit") || col.toLowerCase().includes("bonus") || col.toLowerCase().includes("rider");
+                allFeatures.push({ label: col, key: col, isAttr: true, isHighlight: isBenefit });
+            });
+
+            // Tampilkan hanya atribut yang memiliki isi di antara produk terpilih
             currentComparisonFeatures = allFeatures.filter(feat => {
-                return currentComparisonProducts.some(p => !isEmptyVal(p[feat.key]));
+                return currentComparisonProducts.some(p => {
+                    let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
+                    return !isEmptyVal(val);
+                });
             });
 
             container.innerHTML = `
@@ -550,9 +592,10 @@
                             return `
                                 <tr>
                                     <td class="p-3 ${rowBgClass}">${feat.label}</td>
-                                    ${currentComparisonProducts.map(p => `
-                                        <td class="p-3 border-l ${cellBgClass}">${formatListText(p[feat.key])}</td>
-                                    `).join('')}
+                                    ${currentComparisonProducts.map(p => {
+                                        let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
+                                        return `<td class="p-3 border-l ${cellBgClass}">${formatListText(val)}</td>`;
+                                    }).join('')}
                                 </tr>
                             `;
                         }).join('')}
@@ -577,7 +620,7 @@
             currentComparisonFeatures.forEach(feat => {
                 let rowData = [feat.label];
                 currentComparisonProducts.forEach(p => {
-                    let cellVal = p[feat.key];
+                    let cellVal = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
                     if (isEmptyVal(cellVal)) cellVal = "-";
                     cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
                     rowData.push(cellVal);
@@ -600,62 +643,239 @@
             }
         }
 
+        // --- DETAIL MODAL DINAMIS ---
         function openDetailModal(id) {
             const p = products.find(prod => prod.id === id);
             if (!p) return;
 
             document.getElementById("detailTitle").textContent = p.name;
             
-            const allBenefits = [
-                { label: "Death Benefit", val: p.deathBenefit },
-                { label: "Accidental Death Benefit", val: p.accidentalBenefit },
-                { label: "Terminal Illness Benefit", val: p.terminalIllness },
-                { label: "Sum Assured Bonus", val: p.saBonus },
-                { label: "Cash Payout Bonus", val: p.cashPayout },
-                { label: "Maturity Benefit", val: p.maturityBenefit }
-            ];
+            let basicDetailsHTML = `
+                <div class="detail-row"><span class="detail-label">Perusahaan:</span> ${p.company}</div>
+                <div class="detail-row"><span class="detail-label">Kategori Sistem:</span> ${p.category}</div>
+                <div class="detail-row"><span class="detail-label">Channel:</span> ${p.channel}</div>
+                <div class="detail-row"><span class="detail-label">Tipe Produk:</span> ${p.productType}</div>
+                <div class="detail-row"><span class="detail-label">Mata Uang:</span> ${p.currency}</div>
+            `;
 
-            let benefitsHTML = "";
-            allBenefits.forEach(b => {
-                if (!isEmptyVal(b.val)) {
-                    benefitsHTML += `
-                        <div class="mt-2">
-                            <span class="benefit-label">${b.label}:</span>
-                            <span class="benefit-value">${formatListText(b.val)}</span>
+            let attributesHTML = "";
+            Object.keys(p.attributes).forEach(attrKey => {
+                let val = p.attributes[attrKey];
+                if (!isEmptyVal(val)) {
+                    attributesHTML += `
+                        <div class="mt-3">
+                            <span class="benefit-label">${attrKey}:</span>
+                            <span class="benefit-value">${formatListText(val)}</span>
                         </div>
                     `;
                 }
             });
 
             document.getElementById("detailBody").innerHTML = `
-                <div class="detail-row"><span class="detail-label">Perusahaan:</span> ${p.company}</div>
-                <div class="detail-row"><span class="detail-label">Kategori Sistem:</span> ${p.category}</div>
-                <div class="detail-row"><span class="detail-label">Channel:</span> ${p.channel}</div>
-                <div class="detail-row"><span class="detail-label">Tipe Produk:</span> ${p.productType}</div>
-                <div class="detail-row"><span class="detail-label">Masa Asuransi:</span><br>${formatListText(p.coveragePeriod)}</div>
-                <div class="detail-row"><span class="detail-label">Masa Bayar Premi:</span><br>${formatListText(p.ppp)}</div>
-                <div class="detail-row"><span class="detail-label">Usia Masuk:</span><br>${formatListText(p.entryAge)}</div>
-                
-                ${!isEmptyVal(p.minPremium) ? `<div class="detail-row"><span class="detail-label">Min. Premi:</span><br>${formatListText(p.minPremium)}</div>` : ''}
-                
-                <div class="detail-row border-b-0 pb-0 mb-4"><span class="detail-label">Min. Uang Pertanggungan:</span> ${p.minSumAssured}</div>
-                
-                <div class="pt-4 border-t border-gray-200">
-                    <h4 class="font-bold text-blue-800 text-base mb-1">Manfaat Asuransi</h4>
-                    ${benefitsHTML}
+                ${basicDetailsHTML}
+                <div class="pt-4 mt-2 border-t border-gray-200">
+                    <h4 class="font-bold text-blue-800 text-base mb-2">Manfaat & Ketentuan Produk</h4>
+                    ${attributesHTML || '<p class="text-xs text-gray-500">Tidak ada rincian tambahan.</p>'}
                 </div>
-                
-                ${!isEmptyVal(p.riders) ? `
-                <div class="pt-4 mt-4 border-t border-gray-200">
-                    <h4 class="font-bold text-blue-800 text-base mb-1">Available Riders</h4>
-                    <div class="benefit-value">${formatListText(p.riders)}</div>
-                </div>` : ''}
             `;
             document.getElementById("detailModal").classList.remove("hidden");
         }
 
         function closeDetailModal() { 
             document.getElementById("detailModal").classList.add("hidden"); 
+        }
+
+        // --- UPLOAD EXCEL LOGIC (DYNAMIC PARSER) ---
+        function openUploadModal() {
+            document.getElementById("uploadModal").classList.remove("hidden");
+            document.getElementById("excelFileInput").value = "";
+            document.getElementById("uploadPreviewArea").classList.add("hidden");
+            document.getElementById("uploadPreviewArea").innerHTML = "";
+            document.getElementById("btnSubmitUpload").disabled = true;
+            parsedUploadRows = [];
+        }
+
+        function closeUploadModal() {
+            document.getElementById("uploadModal").classList.add("hidden");
+        }
+
+        function previewExcelFile() {
+            const fileInput = document.getElementById("excelFileInput");
+            const previewArea = document.getElementById("uploadPreviewArea");
+            const submitBtn = document.getElementById("btnSubmitUpload");
+
+            if (!fileInput.files || fileInput.files.length === 0) {
+                previewArea.classList.add("hidden");
+                submitBtn.disabled = true;
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    parsedUploadRows = parseExcelToSheetsSchema(workbook);
+
+                    if (parsedUploadRows.length === 0) {
+                        previewArea.innerHTML = `<p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation"></i> Tidak ada data produk yang terdeteksi di dalam file Excel ini.</p>`;
+                        submitBtn.disabled = true;
+                    } else {
+                        let sampleNames = parsedUploadRows.map(r => r[0]).slice(0, 3).join(", ");
+                        if (parsedUploadRows.length > 3) sampleNames += ", dll.";
+
+                        previewArea.innerHTML = `
+                            <p class="font-bold text-green-700"><i class="fa-solid fa-circle-check"></i> File Valid!</p>
+                            <p><strong>Terdeteksi:</strong> ${parsedUploadRows.length} Produk</p>
+                            <p class="text-gray-500 italic">Pratinjau Produk: ${sampleNames}</p>
+                        `;
+                        submitBtn.disabled = false;
+                    }
+                    previewArea.classList.remove("hidden");
+
+                } catch (err) {
+                    console.error(err);
+                    previewArea.innerHTML = `<p class="text-red-500"><i class="fa-solid fa-circle-xmark"></i> Gagal membaca file Excel. Pastikan format file .xlsx / .xls valid.</p>`;
+                    previewArea.classList.remove("hidden");
+                    submitBtn.disabled = true;
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        // SMART DYNAMIC PARSER
+        function parseExcelToSheetsSchema(workbook) {
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+
+            if (!rawData || rawData.length === 0) return [];
+
+            // Urutan Kolom Standar di Master Google Sheets
+            let masterSchema = [
+                "Product Name", "Company Name", "Par/Non Par", "Product Type", 
+                "Distribution Channel", "Currency", ...dynamicColumns
+            ];
+
+            // Case A: Excel Flat / Horizontal (Header di baris 0)
+            const headerRow = rawData[0].map(c => String(c).trim().toLowerCase());
+            if (headerRow.includes("product name") || headerRow.includes("company name")) {
+                let result = [];
+                for (let r = 1; r < rawData.length; r++) {
+                    let row = rawData[r];
+                    if (!row || row.every(cell => String(cell).trim() === "")) continue;
+
+                    let mappedRow = masterSchema.map(colName => {
+                        let idx = headerRow.findIndex(h => h === colName.toLowerCase());
+                        return (idx !== -1 && row[idx] !== undefined && String(row[idx]).trim() !== "") ? String(row[idx]).trim() : "-";
+                    });
+                    result.push(mappedRow);
+                }
+                return result;
+            }
+
+            // Case B: Excel Vertikal (seperti example.xlsx)
+            let resultRows = [];
+            let colCount = Math.max(...rawData.map(r => r.length));
+
+            for (let c = 1; c < colCount; c++) {
+                let prodName = String(rawData[0][c] || "").replace(/\r\n|\r|\n/g, ' ').trim();
+                if (!prodName || prodName === "undefined" || prodName === "null") continue;
+
+                let company = "-";
+                let lowerName = prodName.toLowerCase();
+                if (lowerName.includes("manulife")) company = "Manulife";
+                else if (lowerName.includes("ava") || lowerName.includes("astra")) company = "Astra Life";
+                else if (lowerName.includes("aia")) company = "AIA";
+                else if (lowerName.includes("allianz")) company = "Allianz";
+                else if (lowerName.includes("pru")) company = "Prudential";
+
+                // Pindai semua baris secara dinamis berdasarkan nama di Kolom A
+                let attrMap = {};
+                for (let r = 0; r < rawData.length; r++) {
+                    let label = String(rawData[r][0] || "").trim();
+                    let val = String(rawData[r][c] || "").trim();
+
+                    if (val && val !== "-" && val !== "null") {
+                        // Jika ada label di kolom A (misal: "Critical Illness Benefit:")
+                        if (label) {
+                            let cleanLabel = label.replace(/:$/, '').trim();
+                            attrMap[cleanLabel] = val;
+                        } else {
+                            // Jika label di kolom A kosong, cek apakah ada prefix di isi sel
+                            let colonIdx = val.indexOf(":");
+                            if (colonIdx > 0 && colonIdx < 30) {
+                                let key = val.substring(0, colonIdx).trim();
+                                let cleanVal = val.substring(colonIdx + 1).trim();
+                                attrMap[key] = cleanVal;
+                            }
+                        }
+                    }
+                }
+
+                // Petakan ke Master Schema
+                let mappedRow = masterSchema.map(colName => {
+                    if (colName === "Product Name") return prodName;
+                    if (colName === "Company Name") return company;
+                    if (colName === "Par/Non Par") return attrMap["Par/Non Par"] || "-";
+                    if (colName === "Product Type") return attrMap["Product Type"] || "-";
+                    if (colName === "Distribution Channel") return attrMap["Distribution Channel"] || attrMap["Channel Distribution"] || "-";
+                    if (colName === "Currency") return attrMap["Currency"] || "-";
+
+                    // Cocokkan atribut dinamis
+                    let matchedKey = Object.keys(attrMap).find(k => k.toLowerCase() === colName.toLowerCase());
+                    return matchedKey ? attrMap[matchedKey] : "-";
+                });
+
+                resultRows.push(mappedRow);
+            }
+
+            return resultRows;
+        }
+
+        async function processAndUploadExcel() {
+            if (parsedUploadRows.length === 0) return;
+
+            const submitBtn = document.getElementById("btnSubmitUpload");
+            const previewArea = document.getElementById("uploadPreviewArea");
+            const targetSheet = document.getElementById("uploadTargetSheet").value;
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Mengirim ke Google Sheets...`;
+
+            try {
+                const payload = {
+                    sheetName: targetSheet,
+                    data: parsedUploadRows
+                };
+
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+
+                previewArea.innerHTML = `
+                    <p class="font-bold text-green-700 text-sm"><i class="fa-solid fa-circle-check"></i> Berhasil Diunggah!</p>
+                    <p class="text-xs text-gray-600">${parsedUploadRows.length} produk baru ditambahkan ke tab <strong>${targetSheet}</strong>.</p>
+                `;
+
+                setTimeout(() => {
+                    closeUploadModal();
+                    fetchAllSheetData();
+                }, 2000);
+
+            } catch (err) {
+                console.error(err);
+                previewArea.innerHTML = `<p class="text-red-500"><i class="fa-solid fa-circle-xmark"></i> Gagal terhubung ke Google Sheets API. Pastikan internet Anda lancar.</p>`;
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Coba Lagi`;
+            }
         }
     </script>
 </body>
