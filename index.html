@@ -8,6 +8,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome CDN -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Pustaka SheetJS untuk Ekspor ke Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    
     <style>
         .detail-row {
             border-bottom: 1px solid #e5e7eb;
@@ -34,12 +37,12 @@
 </head>
 <body class="bg-gray-100 font-sans pb-24">
 
-    <!-- Navbar Header (FITUR 3: Tambah Link ke Master Database) -->
+    <!-- Navbar Header -->
     <header class="bg-blue-900 text-white p-4 shadow-md sticky top-0 z-30">
         <div class="max-w-7xl mx-auto flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <i class="fa-solid me-2 fa-shield-halved"></i> Katalis Asuransi Syariah
-                <!-- Link Open Google Sheets -->
+                <!-- Link Buka Google Sheets -->
                 <a href="https://docs.google.com/spreadsheets/d/1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI/edit" target="_blank" title="Buka Master Database" class="ml-2 text-blue-300 hover:text-white transition">
                     <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
                 </a>
@@ -87,11 +90,11 @@
         <div id="deckGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
     </main>
 
-    <!-- Floating Comparison Bar (FITUR 2: Tambah Tombol Select All) -->
+    <!-- Floating Comparison Bar -->
     <div id="compareBar" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 transition-all transform translate-y-32 z-40">
         <span class="text-sm font-medium whitespace-nowrap"><span id="selectedCount" class="font-bold text-blue-400">0</span> produk dipilih</span>
         
-        <!-- Tombol Pilih Semua yang tampil di layar saat ini -->
+        <!-- Tombol Pilih Semua -->
         <button onclick="selectAllVisible()" class="text-gray-300 hover:text-white text-xs font-semibold px-2 py-1 rounded transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
             <i class="fa-solid fa-check-double me-1"></i> Pilih Semua
         </button>
@@ -102,15 +105,15 @@
         <button onclick="clearSelection()" class="text-gray-400 hover:text-white text-xs underline whitespace-nowrap">Batal</button>
     </div>
 
-    <!-- Modal Perbandingan Side-by-Side (FITUR 1: Tambah Tombol Download) -->
+    <!-- Modal Perbandingan Side-by-Side -->
     <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
             <div class="p-4 bg-gray-900 text-white flex justify-between items-center">
                 <h3 class="font-bold text-lg"><i class="fa-solid fa-code-compare me-2 text-blue-400"></i>Perbandingan Produk</h3>
                 <div class="flex gap-4 items-center">
-                    <!-- Tombol Download CSV Excel -->
-                    <button onclick="downloadComparisonCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition">
-                        <i class="fa-solid fa-file-csv"></i> Ekspor CSV
+                    <!-- Tombol Download Excel -->
+                    <button onclick="downloadComparisonExcel()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition">
+                        <i class="fa-solid fa-file-excel"></i> Ekspor Excel
                     </button>
                     <button onclick="closeComparisonModal()" class="text-gray-400 hover:text-white text-xl ml-2">&times;</button>
                 </div>
@@ -136,7 +139,9 @@
 
         let products = [];
         let selectedProductIds = [];
-        let currentlyVisibleProducts = []; // Menyimpan data produk yang sedang tampil untuk fitur Select All
+        let currentlyVisibleProducts = []; 
+        let currentComparisonFeatures = [];
+        let currentComparisonProducts = [];
 
         function isEmptyVal(val) {
             if (!val) return true;
@@ -144,6 +149,7 @@
             return str === "" || str === "-" || str === "N/A" || str === "null" || str === "undefined";
         }
 
+        // Format Teks Bullet Points
         function formatListText(val) {
             if (isEmptyVal(val)) return "-";
             let text = String(val).trim();
@@ -152,16 +158,17 @@
             return text;
         }
 
-        // --- ICON BERDASARKAN CHANNEL ---
+        // Tentukan Icon Channel
         function getChannelIcon(channelName) {
             const channel = channelName.toLowerCase();
             if (channel.includes("bancassurance")) return "fa-building-columns";
             if (channel.includes("agency") || channel.includes("agen")) return "fa-user-tie";
-            if (channel.includes("direct")) return "fa-paper-plane"; // Ikon ala Telegram
+            if (channel.includes("direct")) return "fa-paper-plane"; 
             if (channel.includes("corporate") || channel.includes("group")) return "fa-users";
             return "fa-diagram-project";
         }
 
+        // Tarik Data dari Google Sheets
         document.addEventListener("DOMContentLoaded", () => {
             const script = document.createElement('script');
             script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=1&tqx=responseHandler:prosesDataSheets`;
@@ -227,8 +234,6 @@
                 document.getElementById("deckGrid").classList.remove("hidden");
                 
                 populateFilters();
-                
-                // Set default tampilan produk
                 currentlyVisibleProducts = [...products]; 
                 renderDeck(currentlyVisibleProducts);
 
@@ -324,12 +329,10 @@
                 selectedProductIds.push(id); 
             }
             updateCompareBar();
-            renderDeck(currentlyVisibleProducts); // Render ulang agar styling border kartu berubah
+            renderDeck(currentlyVisibleProducts); 
         }
 
-        // --- FITUR 2: SELECT ALL ---
         function selectAllVisible() {
-            // Tambahkan semua ID produk yang sedang tampil ke dalam keranjang pilihan (tanpa duplikasi)
             currentlyVisibleProducts.forEach(p => {
                 if (!selectedProductIds.includes(p.id)) {
                     selectedProductIds.push(p.id);
@@ -355,10 +358,6 @@
             renderDeck(currentlyVisibleProducts);
         }
 
-        // Variabel global agar fungsi download bisa membaca apa yang sedang dibandingkan
-        let currentComparisonFeatures = [];
-        let currentComparisonProducts = [];
-
         function openComparisonModal() {
             const container = document.getElementById("modalTableContainer");
             currentComparisonProducts = products.filter(p => selectedProductIds.includes(p.id));
@@ -382,7 +381,6 @@
                 { label: "Available Riders", key: "riders", isHighlight: true }
             ];
 
-            // Tampilkan hanya atribut yang memiliki isi di antara produk terpilih
             currentComparisonFeatures = allFeatures.filter(feat => {
                 return currentComparisonProducts.some(p => !isEmptyVal(p[feat.key]));
             });
@@ -426,47 +424,49 @@
             document.getElementById("compareModal").classList.add("hidden"); 
         }
 
-        // --- FITUR 1: DOWNLOAD EXCEL (CSV) ---
-        function downloadComparisonCSV() {
-            if(currentComparisonProducts.length === 0) return;
+        // FUNGSI DOWNLOAD EXCEL (Mendukung Browser & Python WebView)
+        function downloadComparisonExcel() {
+            if (currentComparisonProducts.length === 0) return;
 
-            // 1. Buat Baris Header CSV
-            let csvContent = "data:text/csv;charset=utf-8,";
+            let ws_data = [];
+            
+            // Header
             let headers = ["Atribut / Fitur"];
             currentComparisonProducts.forEach(p => {
-                // Hapus koma pada nama agar format CSV tidak rusak
-                headers.push(`"${p.company} - ${p.name.replace(/"/g, '""')}"`);
+                headers.push(p.company + " - " + p.name);
             });
-            csvContent += headers.join(",") + "\n";
+            ws_data.push(headers);
 
-            // 2. Buat Baris Data CSV berdasarkan fitur yang sedang tampil
+            // Baris Data
             currentComparisonFeatures.forEach(feat => {
-                let rowData = [`"${feat.label}"`];
-                
+                let rowData = [feat.label];
                 currentComparisonProducts.forEach(p => {
                     let cellVal = p[feat.key];
                     if (isEmptyVal(cellVal)) cellVal = "-";
-                    // Bersihkan newline dari Sheets, ubah jadi newline biasa (alt+enter) untuk Excel
+                    // Ganti newline dengan \n biasa untuk Excel (Alt+Enter)
                     cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
-                    // Bungkus dengan tanda kutip dua untuk mencegah error koma/newline di CSV
-                    rowData.push(`"${cellVal.replace(/"/g, '""')}"`);
+                    rowData.push(cellVal);
                 });
-                
-                csvContent += rowData.join(",") + "\n";
+                ws_data.push(rowData);
             });
 
-            // 3. Eksekusi Download
-            const encodedUri = encodeURI(csvContent);
-            const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            
-            // Format penamaan file: Komparasi_Asuransi_Tanggal.csv
+            // Buat Workbook menggunakan SheetJS
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Komparasi");
+
             const today = new Date().toISOString().split('T')[0];
-            link.setAttribute("download", `Komparasi_Asuransi_${today}.csv`);
-            
-            document.body.appendChild(link); // Diperlukan untuk Firefox
-            link.click();
-            document.body.removeChild(link);
+            const fileName = `Komparasi_Asuransi_${today}.xlsx`;
+
+            // Eksekusi Download
+            if (window.pywebview) {
+                // Di dalam aplikasi .exe Python
+                const b64Data = XLSX.write(wb, {type: 'base64', bookType: 'xlsx'});
+                window.pywebview.api.save_excel(b64Data, fileName);
+            } else {
+                // Di Browser biasa (Chrome, Firefox, Live Server)
+                XLSX.writeFile(wb, fileName);
+            }
         }
 
         function openDetailModal(id) {
