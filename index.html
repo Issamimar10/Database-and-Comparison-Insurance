@@ -9,7 +9,6 @@
     <!-- FontAwesome CDN -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* Styling khusus agar mirip dengan referensi UI */
         .detail-row {
             border-bottom: 1px solid #e5e7eb;
             padding-bottom: 0.75rem;
@@ -35,11 +34,15 @@
 </head>
 <body class="bg-gray-100 font-sans pb-24">
 
-    <!-- Navbar Header -->
+    <!-- Navbar Header (FITUR 3: Tambah Link ke Master Database) -->
     <header class="bg-blue-900 text-white p-4 shadow-md sticky top-0 z-30">
         <div class="max-w-7xl mx-auto flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
-                <i class="fa-solid me-2 fa-shield-halved"></i> Database Produk Asuransi
+                <i class="fa-solid me-2 fa-shield-halved"></i> Katalis Asuransi Syariah
+                <!-- Link Open Google Sheets -->
+                <a href="https://docs.google.com/spreadsheets/d/1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI/edit" target="_blank" title="Buka Master Database" class="ml-2 text-blue-300 hover:text-white transition">
+                    <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
+                </a>
             </h1>
             <span class="text-xs bg-blue-800 px-3 py-1 rounded-full text-blue-200" id="totalProductCount">Memuat data...</span>
         </div>
@@ -58,18 +61,14 @@
                 <select id="companyFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
                     <option value="">Semua Perusahaan</option>
                 </select>
-
                 <select id="typeFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
                     <option value="">Semua Tipe Produk</option>
                 </select>
-
                 <select id="channelFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
                     <option value="">Semua Channel</option>
                     <option value="Direct">Direct</option>
                     <option value="Bancassurance">Bancassurance</option>
                 </select>
-
-                <!-- Filter Currency -->
                 <select id="currencyFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
                     <option value="">Semua Mata Uang</option>
                     <option value="IDR">IDR</option>
@@ -88,21 +87,33 @@
         <div id="deckGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
     </main>
 
-    <!-- Floating Comparison Bar -->
+    <!-- Floating Comparison Bar (FITUR 2: Tambah Tombol Select All) -->
     <div id="compareBar" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 transition-all transform translate-y-32 z-40">
-        <span class="text-sm font-medium"><span id="selectedCount" class="font-bold text-blue-400">0</span> produk dipilih</span>
-        <button onclick="openComparisonModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition">
+        <span class="text-sm font-medium whitespace-nowrap"><span id="selectedCount" class="font-bold text-blue-400">0</span> produk dipilih</span>
+        
+        <!-- Tombol Pilih Semua yang tampil di layar saat ini -->
+        <button onclick="selectAllVisible()" class="text-gray-300 hover:text-white text-xs font-semibold px-2 py-1 rounded transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
+            <i class="fa-solid fa-check-double me-1"></i> Pilih Semua
+        </button>
+
+        <button onclick="openComparisonModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition whitespace-nowrap">
             <i class="fa-solid fa-columns me-1"></i> Bandingkan
         </button>
-        <button onclick="clearSelection()" class="text-gray-400 hover:text-white text-xs underline">Batal</button>
+        <button onclick="clearSelection()" class="text-gray-400 hover:text-white text-xs underline whitespace-nowrap">Batal</button>
     </div>
 
-    <!-- Modal Perbandingan Side-by-Side -->
+    <!-- Modal Perbandingan Side-by-Side (FITUR 1: Tambah Tombol Download) -->
     <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
             <div class="p-4 bg-gray-900 text-white flex justify-between items-center">
-                <h3 class="font-bold text-lg"><i class="fa-solid fa-code-compare me-2 text-blue-400"></i>Perbandingan Produk Side-by-Side</h3>
-                <button onclick="closeComparisonModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-code-compare me-2 text-blue-400"></i>Perbandingan Produk</h3>
+                <div class="flex gap-4 items-center">
+                    <!-- Tombol Download CSV Excel -->
+                    <button onclick="downloadComparisonCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition">
+                        <i class="fa-solid fa-file-csv"></i> Ekspor CSV
+                    </button>
+                    <button onclick="closeComparisonModal()" class="text-gray-400 hover:text-white text-xl ml-2">&times;</button>
+                </div>
             </div>
             <div class="p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer"></div>
         </div>
@@ -125,6 +136,7 @@
 
         let products = [];
         let selectedProductIds = [];
+        let currentlyVisibleProducts = []; // Menyimpan data produk yang sedang tampil untuk fitur Select All
 
         function isEmptyVal(val) {
             if (!val) return true;
@@ -132,31 +144,24 @@
             return str === "" || str === "-" || str === "N/A" || str === "null" || str === "undefined";
         }
 
-        // FUNGSI FORMAT DIPERBARUI: 
-        // Memisahkan " - Plan A... - Plan B..." menjadi baris-baris baru.
-        // Rentang angka (seperti 5 - 15) tidak akan dipisah.
         function formatListText(val) {
             if (isEmptyVal(val)) return "-";
             let text = String(val).trim();
-            // Ganti baris baru (\n) di Sheets menjadi <br> di HTML
             text = text.replace(/\r\n|\r|\n/g, '<br>');
-            // Ganti pola ' - ' (spasi strip spasi) yang diikuti huruf menjadi '<br>- '
             text = text.replace(/\s+-\s+(?=[A-Za-z])/g, '<br>- ');
             return text;
         }
 
-        // Fungsi untuk menentukan ikon berdasarkan Distribution Channel
+        // --- ICON BERDASARKAN CHANNEL ---
         function getChannelIcon(channelName) {
             const channel = channelName.toLowerCase();
-            
-            if (channel.includes("bancassurance")) {
-                return "fa-building-columns"; // Ikon bank
-            } else if (channel.includes("direct")) {
-                return "fa-paper-plane"; // Ikon pesawat kertas
-            } else {
-                return "fa-diagram-project"; // Ikon default (seperti yang ada sekarang)
-            }
+            if (channel.includes("bancassurance")) return "fa-building-columns";
+            if (channel.includes("agency") || channel.includes("agen")) return "fa-user-tie";
+            if (channel.includes("direct")) return "fa-paper-plane"; // Ikon ala Telegram
+            if (channel.includes("corporate") || channel.includes("group")) return "fa-users";
+            return "fa-diagram-project";
         }
+
         document.addEventListener("DOMContentLoaded", () => {
             const script = document.createElement('script');
             script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=1&tqx=responseHandler:prosesDataSheets`;
@@ -216,21 +221,21 @@
                     };
                 }).filter(p => p !== null);
 
-                if (products.length === 0) {
-                    throw new Error("Data di Google Sheets tidak ditemukan.");
-                }
+                if (products.length === 0) throw new Error("Data di Google Sheets tidak ditemukan.");
 
                 document.getElementById("loadingIndicator").classList.add("hidden");
                 document.getElementById("deckGrid").classList.remove("hidden");
                 
                 populateFilters();
-                renderDeck(products);
+                
+                // Set default tampilan produk
+                currentlyVisibleProducts = [...products]; 
+                renderDeck(currentlyVisibleProducts);
 
             } catch (err) {
                 console.error(err);
                 document.getElementById("loadingIndicator").innerHTML = `
-                    <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Gagal memuat data: ${err.message}</p>
-                `;
+                    <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Gagal memuat data: ${err.message}</p>`;
             }
         };
 
@@ -301,14 +306,14 @@
             const channel = document.getElementById("channelFilter").value;
             const curr = document.getElementById("currencyFilter").value;
 
-            const filtered = products.filter(p => {
+            currentlyVisibleProducts = products.filter(p => {
                 return (p.name.toLowerCase().includes(search) || p.company.toLowerCase().includes(search)) &&
                        (!comp || p.company === comp) &&
                        (!type || p.productType === type) &&
                        (!channel || p.channel.includes(channel)) &&
                        (!curr || p.currency.includes(curr));
             });
-            renderDeck(filtered);
+            renderDeck(currentlyVisibleProducts);
         }
 
         function toggleSelectProduct(id, e) {
@@ -319,7 +324,19 @@
                 selectedProductIds.push(id); 
             }
             updateCompareBar();
-            filterData();
+            renderDeck(currentlyVisibleProducts); // Render ulang agar styling border kartu berubah
+        }
+
+        // --- FITUR 2: SELECT ALL ---
+        function selectAllVisible() {
+            // Tambahkan semua ID produk yang sedang tampil ke dalam keranjang pilihan (tanpa duplikasi)
+            currentlyVisibleProducts.forEach(p => {
+                if (!selectedProductIds.includes(p.id)) {
+                    selectedProductIds.push(p.id);
+                }
+            });
+            updateCompareBar();
+            renderDeck(currentlyVisibleProducts);
         }
 
         function updateCompareBar() {
@@ -335,12 +352,16 @@
         function clearSelection() { 
             selectedProductIds = []; 
             updateCompareBar(); 
-            filterData(); 
+            renderDeck(currentlyVisibleProducts);
         }
+
+        // Variabel global agar fungsi download bisa membaca apa yang sedang dibandingkan
+        let currentComparisonFeatures = [];
+        let currentComparisonProducts = [];
 
         function openComparisonModal() {
             const container = document.getElementById("modalTableContainer");
-            const selectedProds = products.filter(p => selectedProductIds.includes(p.id));
+            currentComparisonProducts = products.filter(p => selectedProductIds.includes(p.id));
 
             const allFeatures = [
                 { label: "Channel Distribusi", key: "channel", isHighlight: false },
@@ -361,32 +382,35 @@
                 { label: "Available Riders", key: "riders", isHighlight: true }
             ];
 
-            const visibleFeatures = allFeatures.filter(feat => {
-                return selectedProds.some(p => !isEmptyVal(p[feat.key]));
+            // Tampilkan hanya atribut yang memiliki isi di antara produk terpilih
+            currentComparisonFeatures = allFeatures.filter(feat => {
+                return currentComparisonProducts.some(p => !isEmptyVal(p[feat.key]));
             });
 
             container.innerHTML = `
-                <table class="w-full text-sm text-left border-collapse min-w-[600px]">
+                <table class="w-full text-sm text-left border-collapse min-w-[600px]" id="comparisonTable">
                     <thead>
                         <tr class="bg-gray-100 border-b">
                             <th class="p-3 font-semibold text-gray-700 w-48 sticky left-0 bg-gray-100 z-10 shadow-sm">Atribut / Fitur</th>
-                            ${selectedProds.map(p => `
+                            ${currentComparisonProducts.map(p => `
                                 <th class="p-3 font-bold text-blue-900 border-l min-w-[240px]">
-                                    <div class="text-xs text-blue-600 font-normal">${p.company}</div>${p.name}
+                                    <div class="text-xs text-blue-600 font-normal">${p.company}</div>
+                                    ${p.name}
                                 </th>
                             `).join('')}
                         </tr>
                     </thead>
                     <tbody class="divide-y">
-                        ${visibleFeatures.map(feat => {
+                        ${currentComparisonFeatures.map(feat => {
                             const rowBgClass = feat.isHighlight 
                                 ? 'font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm border-t-2 border-blue-100' 
                                 : 'font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm';
-                            const cellBgClass = feat.isHighlight ? 'text-xs bg-white' : '';
+                            const cellBgClass = feat.isHighlight ? 'text-xs bg-white border-t-2 border-blue-100' : '';
 
                             return `
                                 <tr>
-                                    <td class="p-3 ${rowBgClass}">${feat.label}</td>${selectedProds.map(p => `
+                                    <td class="p-3 ${rowBgClass}">${feat.label}</td>
+                                    ${currentComparisonProducts.map(p => `
                                         <td class="p-3 border-l ${cellBgClass}">${formatListText(p[feat.key])}</td>
                                     `).join('')}
                                 </tr>
@@ -400,6 +424,49 @@
 
         function closeComparisonModal() { 
             document.getElementById("compareModal").classList.add("hidden"); 
+        }
+
+        // --- FITUR 1: DOWNLOAD EXCEL (CSV) ---
+        function downloadComparisonCSV() {
+            if(currentComparisonProducts.length === 0) return;
+
+            // 1. Buat Baris Header CSV
+            let csvContent = "data:text/csv;charset=utf-8,";
+            let headers = ["Atribut / Fitur"];
+            currentComparisonProducts.forEach(p => {
+                // Hapus koma pada nama agar format CSV tidak rusak
+                headers.push(`"${p.company} - ${p.name.replace(/"/g, '""')}"`);
+            });
+            csvContent += headers.join(",") + "\n";
+
+            // 2. Buat Baris Data CSV berdasarkan fitur yang sedang tampil
+            currentComparisonFeatures.forEach(feat => {
+                let rowData = [`"${feat.label}"`];
+                
+                currentComparisonProducts.forEach(p => {
+                    let cellVal = p[feat.key];
+                    if (isEmptyVal(cellVal)) cellVal = "-";
+                    // Bersihkan newline dari Sheets, ubah jadi newline biasa (alt+enter) untuk Excel
+                    cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
+                    // Bungkus dengan tanda kutip dua untuk mencegah error koma/newline di CSV
+                    rowData.push(`"${cellVal.replace(/"/g, '""')}"`);
+                });
+                
+                csvContent += rowData.join(",") + "\n";
+            });
+
+            // 3. Eksekusi Download
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            
+            // Format penamaan file: Komparasi_Asuransi_Tanggal.csv
+            const today = new Date().toISOString().split('T')[0];
+            link.setAttribute("download", `Komparasi_Asuransi_${today}.csv`);
+            
+            document.body.appendChild(link); // Diperlukan untuk Firefox
+            link.click();
+            document.body.removeChild(link);
         }
 
         function openDetailModal(id) {
