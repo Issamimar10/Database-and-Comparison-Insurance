@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Database & Komparasi Asuransi</title>
+    <title>Insurance Database and Comparison Maker</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome CDN -->
@@ -33,6 +33,14 @@
         .benefit-value {
             color: #4b5563;
         }
+        /* Styling untuk scrollbar custom di dropdown */
+        .dropdown-content::-webkit-scrollbar {
+            width: 6px;
+        }
+        .dropdown-content::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans pb-24">
@@ -54,36 +62,68 @@
     <main class="max-w-7xl mx-auto p-4 md:p-6">
         <!-- Filter & Search Bar -->
         <div class="bg-white p-4 rounded-xl shadow-sm mb-6 flex flex-col md:flex-row gap-3 items-center">
-            <div class="relative w-full md:w-1/3">
+            <!-- Search Box -->
+            <div class="relative w-full md:w-64 shrink-0">
                 <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-gray-400"></i>
-                <input type="text" id="searchInput" oninput="filterData()" placeholder="Cari nama produk atau perusahaan..." 
+                <input type="text" id="searchInput" oninput="filterData()" placeholder="Cari nama produk..." 
                        class="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
             </div>
 
-            <div class="flex flex-wrap gap-2 w-full md:w-2/3 justify-end">
-                <select id="companyFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
-                    <option value="">Semua Perusahaan</option>
-                </select>
-                <select id="typeFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
-                    <option value="">Semua Tipe Produk</option>
-                </select>
-                <select id="channelFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
-                    <option value="">Semua Channel</option>
-                    <option value="Direct">Direct</option>
-                    <option value="Bancassurance">Bancassurance</option>
-                </select>
-                <select id="currencyFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
-                    <option value="">Semua Mata Uang</option>
-                    <option value="IDR">IDR</option>
-                    <option value="USD">USD</option>
-                </select>
+            <!-- Custom Multi-Select Dropdowns (Excel Style) -->
+            <div class="flex flex-wrap gap-2 w-full justify-end" id="filterContainer">
+                
+                <!-- Filter Kategori (Konven/Syariah/HS) -->
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[140px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('categoryDropdown', event)">
+                        <span id="categoryBtnText" class="truncate font-medium">Semua Kategori</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="categoryDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <!-- Filter Perusahaan -->
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[160px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('companyDropdown', event)">
+                        <span id="companyBtnText" class="truncate font-medium">Semua Perusahaan</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="companyDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <!-- Filter Tipe Produk -->
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[160px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('typeDropdown', event)">
+                        <span id="typeBtnText" class="truncate font-medium">Semua Tipe</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="typeDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <!-- Filter Channel -->
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[150px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('channelDropdown', event)">
+                        <span id="channelBtnText" class="truncate font-medium">Semua Channel</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="channelDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <!-- Filter Currency -->
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[140px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('currencyDropdown', event)">
+                        <span id="currencyBtnText" class="truncate font-medium">Semua Mata Uang</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="currencyDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
             </div>
         </div>
 
         <!-- Tampilan Loading -->
         <div id="loadingIndicator" class="text-center py-12 text-gray-500">
             <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-3 text-blue-500"></i>
-            <p>Menghubungkan ke Google Sheets...</p>
+            <p>Menghubungkan & Mensinkronisasi Tab Data...</p>
         </div>
 
         <!-- AppSheet Deck-Style Grid -->
@@ -93,12 +133,9 @@
     <!-- Floating Comparison Bar -->
     <div id="compareBar" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 transition-all transform translate-y-32 z-40">
         <span class="text-sm font-medium whitespace-nowrap"><span id="selectedCount" class="font-bold text-blue-400">0</span> produk dipilih</span>
-        
-        <!-- Tombol Pilih Semua -->
         <button onclick="selectAllVisible()" class="text-gray-300 hover:text-white text-xs font-semibold px-2 py-1 rounded transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
             <i class="fa-solid fa-check-double me-1"></i> Pilih Semua
         </button>
-
         <button onclick="openComparisonModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition whitespace-nowrap">
             <i class="fa-solid fa-columns me-1"></i> Bandingkan
         </button>
@@ -111,7 +148,6 @@
             <div class="p-4 bg-gray-900 text-white flex justify-between items-center">
                 <h3 class="font-bold text-lg"><i class="fa-solid fa-code-compare me-2 text-blue-400"></i>Perbandingan Produk</h3>
                 <div class="flex gap-4 items-center">
-                    <!-- Tombol Download Excel -->
                     <button onclick="downloadComparisonExcel()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition">
                         <i class="fa-solid fa-file-excel"></i> Ekspor Excel
                     </button>
@@ -136,6 +172,7 @@
     <!-- SCRIPT LOGIKA UTAMA WEB -->
     <script>
         const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
+        const SHEET_TABS = ["Konven", "Syariah", "HS"]; // Nama tab di Google Sheets harus persis seperti ini
 
         let products = [];
         let selectedProductIds = [];
@@ -143,13 +180,91 @@
         let currentComparisonFeatures = [];
         let currentComparisonProducts = [];
 
+        // State untuk menyimpan filter ganda yang dipilih
+        let activeFilters = {
+            category: [],
+            company: [],
+            type: [],
+            channel: [],
+            currency: []
+        };
+
+        // --- SISTEM DROPDOWN MULTI-SELECT ---
+        function toggleDropdown(id, event) {
+            event.stopPropagation();
+            document.querySelectorAll('.dropdown-content').forEach(el => {
+                if (el.id !== id) el.classList.add('hidden');
+            });
+            document.getElementById(id).classList.toggle('hidden');
+        }
+
+        // Tutup dropdown jika klik area luar
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.custom-select')) {
+                document.querySelectorAll('.dropdown-content').forEach(el => el.classList.add('hidden'));
+            }
+        });
+
+        // Hentikan penutupan saat mengeklik checkbox di dalam dropdown
+        document.querySelectorAll('.dropdown-content').forEach(el => {
+            el.addEventListener('click', (e) => e.stopPropagation());
+        });
+
+        function updateFilterState(filterKey, value, isChecked) {
+            if (isChecked) {
+                activeFilters[filterKey].push(value);
+            } else {
+                activeFilters[filterKey] = activeFilters[filterKey].filter(v => v !== value);
+            }
+            updateFilterButtonText(filterKey);
+            filterData();
+        }
+
+        function updateFilterButtonText(key) {
+            const btn = document.getElementById(`${key}BtnText`);
+            const count = activeFilters[key].length;
+            const defaultLabels = {
+                category: "Semua Kategori",
+                company: "Semua Perusahaan",
+                type: "Semua Tipe",
+                channel: "Semua Channel",
+                currency: "Semua Mata Uang"
+            };
+
+            if (count === 0) {
+                btn.textContent = defaultLabels[key];
+                btn.classList.remove("text-blue-600", "font-bold");
+            } else if (count === 1) {
+                btn.textContent = activeFilters[key][0];
+                btn.classList.add("text-blue-600", "font-bold");
+            } else {
+                btn.textContent = `${count} Dipilih`;
+                btn.classList.add("text-blue-600", "font-bold");
+            }
+        }
+
+        function buildDropdownUI(filterKey, optionsArray) {
+            const container = document.getElementById(`${filterKey}Dropdown`);
+            container.innerHTML = "";
+            optionsArray.forEach(opt => {
+                const label = document.createElement('label');
+                label.className = "flex items-start space-x-3 p-2 hover:bg-gray-100 cursor-pointer rounded text-sm text-gray-700 transition";
+                label.innerHTML = `
+                    <input type="checkbox" value="${opt}" class="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4 accent-blue-600 cursor-pointer" 
+                           onchange="updateFilterState('${filterKey}', this.value, this.checked)">
+                    <span class="flex-1">${opt}</span>
+                `;
+                container.appendChild(label);
+            });
+        }
+
+        // --- HELPER FUNCTIONS ---
         function isEmptyVal(val) {
             if (!val) return true;
             const str = String(val).trim();
             return str === "" || str === "-" || str === "N/A" || str === "null" || str === "undefined";
         }
 
-        // Format Teks Bullet Points
         function formatListText(val) {
             if (isEmptyVal(val)) return "-";
             let text = String(val).trim();
@@ -158,7 +273,6 @@
             return text;
         }
 
-        // Tentukan Icon Channel
         function getChannelIcon(channelName) {
             const channel = channelName.toLowerCase();
             if (channel.includes("bancassurance")) return "fa-building-columns";
@@ -168,14 +282,31 @@
             return "fa-diagram-project";
         }
 
-        // Tarik Data dari Google Sheets
+        // --- PENARIKAN DATA BANYAK SHEET (MULTI-SHEET FETCH) ---
+        let sheetsProcessed = 0;
+        let sheetsFailed = 0;
+
         document.addEventListener("DOMContentLoaded", () => {
-            const script = document.createElement('script');
-            script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=1&tqx=responseHandler:prosesDataSheets`;
-            document.body.appendChild(script);
+            // Kita jalankan script pengambilan per tiap tab sheet secara paralel
+            SHEET_TABS.forEach((tabName, index) => {
+                // Buat fungsi global unik per tab
+                window[`prosesDataSheet${index}`] = function(jsonData) {
+                    processSheetData(jsonData, tabName);
+                    checkAllSheetsLoaded();
+                };
+
+                const script = document.createElement('script');
+                script.onerror = () => {
+                    console.warn(`Gagal memuat tab: ${tabName}. Pastikan nama tab persis ada di Sheets.`);
+                    sheetsFailed++;
+                    checkAllSheetsLoaded();
+                };
+                script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${encodeURIComponent(tabName)}&headers=1&tqx=responseHandler:prosesDataSheet${index}`;
+                document.body.appendChild(script);
+            });
         });
 
-        window.prosesDataSheets = function(jsonData) {
+        function processSheetData(jsonData, categoryName) {
             try {
                 let cols = jsonData.table.cols.map(c => c ? (c.label || "").trim() : ""); 
                 let rows = jsonData.table.rows;
@@ -186,8 +317,8 @@
                     rows = rows.slice(1);
                 }
 
-                products = rows.map((row, index) => {
-                    if (!row || !row.c) return null;
+                rows.forEach((row) => {
+                    if (!row || !row.c) return;
 
                     const getVal = (colName) => {
                         const cIdx = cols.findIndex(c => c.toLowerCase() === colName.toLowerCase());
@@ -200,10 +331,11 @@
                     const prodName = getVal("Product Name");
                     const compName = getVal("Company Name");
 
-                    if (prodName === "-" && compName === "-") return null;
+                    if (prodName === "-" && compName === "-") return;
 
-                    return {
-                        id: index + 1,
+                    products.push({
+                        id: products.length + 1, // Auto-increment ID unik global
+                        category: categoryName, // Inject kategori sumber sheet (Konven/Syariah/HS)
                         company: compName,
                         name: prodName,
                         channel: getVal("Distribution Channel"),
@@ -225,43 +357,43 @@
                         minSumAssured: getVal("Min Sum Assured"),
                         underwriting: getVal("Underwriting Method"),
                         riders: getVal("Available Riders")
-                    };
-                }).filter(p => p !== null);
+                    });
+                });
+            } catch (err) {
+                console.error(`Error memproses tab ${categoryName}:`, err);
+            }
+        }
 
-                if (products.length === 0) throw new Error("Data di Google Sheets tidak ditemukan.");
+        function checkAllSheetsLoaded() {
+            sheetsProcessed++;
+            if (sheetsProcessed + sheetsFailed === SHEET_TABS.length) {
+                if (products.length === 0) {
+                    document.getElementById("loadingIndicator").innerHTML = `
+                        <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Data kosong atau tidak ada tab bernama Konven, Syariah, atau HS.</p>`;
+                    return;
+                }
 
                 document.getElementById("loadingIndicator").classList.add("hidden");
                 document.getElementById("deckGrid").classList.remove("hidden");
                 
-                populateFilters();
+                populateAllDropdowns();
                 currentlyVisibleProducts = [...products]; 
                 renderDeck(currentlyVisibleProducts);
-
-            } catch (err) {
-                console.error(err);
-                document.getElementById("loadingIndicator").innerHTML = `
-                    <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Gagal memuat data: ${err.message}</p>`;
             }
-        };
+        }
 
-        function populateFilters() {
-            const companySelect = document.getElementById("companyFilter");
-            const companies = [...new Set(products.map(p => p.company))].filter(c => c !== "-");
-            companies.forEach(comp => {
-                const opt = document.createElement("option");
-                opt.value = comp;
-                opt.textContent = comp;
-                companySelect.appendChild(opt);
-            });
+        function populateAllDropdowns() {
+            buildDropdownUI('category', [...new Set(products.map(p => p.category))].filter(c => c));
+            buildDropdownUI('company', [...new Set(products.map(p => p.company))].filter(c => c && c !== "-"));
+            buildDropdownUI('type', [...new Set(products.map(p => p.productType))].filter(t => t && t !== "-"));
+            buildDropdownUI('channel', [...new Set(products.map(p => p.channel))].filter(c => c && c !== "-"));
+            buildDropdownUI('currency', [...new Set(products.map(p => p.currency))].filter(c => c && c !== "-"));
+        }
 
-            const typeSelect = document.getElementById("typeFilter");
-            const types = [...new Set(products.map(p => p.productType))].filter(t => t && t !== "-");
-            types.forEach(type => {
-                const opt = document.createElement("option");
-                opt.value = type;
-                opt.textContent = type;
-                typeSelect.appendChild(opt);
-            });
+        function getCategoryBadge(category) {
+            if(category === "Konven") return `<span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
+            if(category === "Syariah") return `<span class="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
+            return `<span class="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`; // HS
         }
 
         function renderDeck(data) {
@@ -282,8 +414,11 @@
                 card.innerHTML = `
                     <div>
                         <div class="flex justify-between items-start mb-2">
-                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">${p.company}</span>
-                            <span class="text-xs text-gray-500">${p.currency}</span>
+                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">${p.company}</span>
+                            <div class="flex flex-col items-end gap-1">
+                                ${getCategoryBadge(p.category)}
+                                <span class="text-xs text-gray-500 font-medium">${p.currency}</span>
+                            </div>
                         </div>
                         <h3 class="font-bold text-gray-800 text-base mb-1" onclick="openDetailModal(${p.id})">${p.name}</h3>
                         <p class="text-xs text-gray-500 mb-3"><i class="fa-solid ${getChannelIcon(p.channel)} me-1"></i> ${p.channel} &bull; <span class="italic">${p.productType}</span></p>
@@ -304,19 +439,25 @@
             });
         }
 
+        // LOGIKA FILTER MULTI-SELECT (Logic OR/AND khusus)
         function filterData() {
             const search = document.getElementById("searchInput").value.toLowerCase();
-            const comp = document.getElementById("companyFilter").value;
-            const type = document.getElementById("typeFilter").value;
-            const channel = document.getElementById("channelFilter").value;
-            const curr = document.getElementById("currencyFilter").value;
 
             currentlyVisibleProducts = products.filter(p => {
-                return (p.name.toLowerCase().includes(search) || p.company.toLowerCase().includes(search)) &&
-                       (!comp || p.company === comp) &&
-                       (!type || p.productType === type) &&
-                       (!channel || p.channel.includes(channel)) &&
-                       (!curr || p.currency.includes(curr));
+                const matchSearch = p.name.toLowerCase().includes(search) || p.company.toLowerCase().includes(search);
+                
+                // Jika array filter kosong, artinya tampilkan semua (True). 
+                // Jika ada isinya, cek apakah properti produk ada di dalam array filter tersebut.
+                const matchCat  = activeFilters.category.length === 0 || activeFilters.category.includes(p.category);
+                const matchComp = activeFilters.company.length === 0 || activeFilters.company.includes(p.company);
+                const matchType = activeFilters.type.length === 0 || activeFilters.type.includes(p.productType);
+                
+                // Untuk Channel dan Currency (karena datanya bisa gabungan teks "IDR & USD"), 
+                // kita gunakan 'some/includes' agar pencocokannya lebih luwes.
+                const matchChan = activeFilters.channel.length === 0 || activeFilters.channel.some(f => p.channel.includes(f));
+                const matchCurr = activeFilters.currency.length === 0 || activeFilters.currency.some(f => p.currency.includes(f));
+
+                return matchSearch && matchCat && matchComp && matchType && matchChan && matchCurr;
             });
             renderDeck(currentlyVisibleProducts);
         }
@@ -363,6 +504,7 @@
             currentComparisonProducts = products.filter(p => selectedProductIds.includes(p.id));
 
             const allFeatures = [
+                { label: "Sistem Kategori", key: "category", isHighlight: false },
                 { label: "Channel Distribusi", key: "channel", isHighlight: false },
                 { label: "Tipe Produk", key: "productType", isHighlight: false },
                 { label: "Masa Pembayaran (PPP)", key: "ppp", isHighlight: false },
@@ -424,33 +566,25 @@
             document.getElementById("compareModal").classList.add("hidden"); 
         }
 
-        // FUNGSI DOWNLOAD EXCEL (Mendukung Browser & Python WebView)
         function downloadComparisonExcel() {
             if (currentComparisonProducts.length === 0) return;
-
             let ws_data = [];
             
-            // Header
             let headers = ["Atribut / Fitur"];
-            currentComparisonProducts.forEach(p => {
-                headers.push(p.company + " - " + p.name);
-            });
+            currentComparisonProducts.forEach(p => headers.push(p.company + " - " + p.name));
             ws_data.push(headers);
 
-            // Baris Data
             currentComparisonFeatures.forEach(feat => {
                 let rowData = [feat.label];
                 currentComparisonProducts.forEach(p => {
                     let cellVal = p[feat.key];
                     if (isEmptyVal(cellVal)) cellVal = "-";
-                    // Ganti newline dengan \n biasa untuk Excel (Alt+Enter)
                     cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
                     rowData.push(cellVal);
                 });
                 ws_data.push(rowData);
             });
 
-            // Buat Workbook menggunakan SheetJS
             const ws = XLSX.utils.aoa_to_sheet(ws_data);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Komparasi");
@@ -458,13 +592,10 @@
             const today = new Date().toISOString().split('T')[0];
             const fileName = `Komparasi_Asuransi_${today}.xlsx`;
 
-            // Eksekusi Download
             if (window.pywebview) {
-                // Di dalam aplikasi .exe Python
                 const b64Data = XLSX.write(wb, {type: 'base64', bookType: 'xlsx'});
                 window.pywebview.api.save_excel(b64Data, fileName);
             } else {
-                // Di Browser biasa (Chrome, Firefox, Live Server)
                 XLSX.writeFile(wb, fileName);
             }
         }
@@ -498,6 +629,7 @@
 
             document.getElementById("detailBody").innerHTML = `
                 <div class="detail-row"><span class="detail-label">Perusahaan:</span> ${p.company}</div>
+                <div class="detail-row"><span class="detail-label">Kategori Sistem:</span> ${p.category}</div>
                 <div class="detail-row"><span class="detail-label">Channel:</span> ${p.channel}</div>
                 <div class="detail-row"><span class="detail-label">Tipe Produk:</span> ${p.productType}</div>
                 <div class="detail-row"><span class="detail-label">Masa Asuransi:</span><br>${formatListText(p.coveragePeriod)}</div>
