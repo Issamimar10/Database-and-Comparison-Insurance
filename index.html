@@ -55,12 +55,18 @@
                 </a>
             </h1>
             
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+                <!-- Tombol Refresh Data -->
+                <button onclick="fetchAllSheetData()" class="bg-blue-800 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition" title="Refresh Sinkronisasi Data">
+                    <i class="fa-solid fa-rotate text-sm" id="refreshIcon"></i> Refresh Data
+                </button>
+
                 <!-- Tombol Upload Excel -->
                 <button onclick="openUploadModal()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition">
                     <i class="fa-solid fa-file-arrow-up text-sm"></i> Upload Excel
                 </button>
-                <span class="text-xs bg-blue-800 px-3 py-1.5 rounded-full text-blue-200" id="totalProductCount">Memuat data...</span>
+                
+                <span class="text-xs bg-blue-950 px-3 py-2 rounded-lg text-blue-200 border border-blue-800 font-medium" id="totalProductCount">Memuat data...</span>
             </div>
         </div>
     </header>
@@ -198,14 +204,26 @@
         </div>
     </div>
 
-    <!-- Modal Detail Single Produk -->
+    <!-- Modal Detail & Edit Produk -->
     <div id="detailModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
             <div class="p-4 bg-blue-900 text-white flex justify-between items-center">
                 <h3 id="detailTitle" class="font-bold text-lg">Detail Produk</h3>
-                <button onclick="closeDetailModal()" class="text-gray-300 hover:text-white text-xl">&times;</button>
+                <div class="flex items-center gap-2">
+                    <button id="btnToggleEdit" onclick="toggleEditMode()" class="bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition flex items-center gap-1">
+                        <i class="fa-solid fa-pen-to-square"></i> Edit Produk
+                    </button>
+                    <button onclick="closeDetailModal()" class="text-gray-300 hover:text-white text-xl ml-1">&times;</button>
+                </div>
             </div>
-            <div class="p-6 overflow-y-auto" id="detailBody"></div>
+            <div class="p-6 overflow-y-auto flex-1" id="detailBody"></div>
+            <!-- Footer khusus tombol simpan saat Edit Mode -->
+            <div id="detailEditFooter" class="p-4 bg-gray-50 border-t flex justify-end gap-2 hidden">
+                <button onclick="cancelEditMode()" class="px-4 py-2 border rounded-lg text-xs font-semibold text-gray-600 hover:bg-gray-100">Batal</button>
+                <button id="btnSaveProductEdit" onclick="saveProductEdit()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan
+                </button>
+            </div>
         </div>
     </div>
 
@@ -218,9 +236,12 @@
         let products = [];
         let selectedProductIds = [];
         let currentlyVisibleProducts = []; 
-        let dynamicColumns = []; // Menyimpan semua nama kolom atribut secara dinamis
+        let dynamicColumns = [];
         let currentComparisonFeatures = [];
         let currentComparisonProducts = [];
+
+        let currentActiveProduct = null;
+        let isEditMode = false;
 
         let activeFilters = {
             category: [],
@@ -231,6 +252,38 @@
         };
 
         let parsedUploadRows = [];
+
+        // --- HELPER: PEMBERSIH TEKS N/A MENJADI STRIP ---
+        function sanitizeValue(val) {
+            if (!val) return "-";
+            let str = String(val).trim();
+            if (/^n\/?a\.?$/i.test(str) || str === "" || str === "null" || str === "undefined") {
+                return "-";
+            }
+            return str;
+        }
+
+        function isEmptyVal(val) {
+            const clean = sanitizeValue(val);
+            return clean === "-";
+        }
+
+        function formatListText(val) {
+            const clean = sanitizeValue(val);
+            if (clean === "-") return "-";
+            let text = clean.replace(/\r\n|\r|\n/g, '<br>');
+            text = text.replace(/\s+-\s+(?=[A-Za-z])/g, '<br>- ');
+            return text;
+        }
+
+        function getChannelIcon(channelName) {
+            const channel = String(channelName).toLowerCase();
+            if (channel.includes("bancassurance")) return "fa-building-columns";
+            if (channel.includes("agency") || channel.includes("agen")) return "fa-user-tie";
+            if (channel.includes("direct")) return "fa-paper-plane"; 
+            if (channel.includes("corporate") || channel.includes("group")) return "fa-users";
+            return "fa-diagram-project";
+        }
 
         // --- DROPDOWN MULTI-SELECT ---
         function toggleDropdown(id, event) {
@@ -295,35 +348,35 @@
             });
         }
 
-        // --- HELPER FUNCTIONS ---
-        function isEmptyVal(val) {
-            if (!val) return true;
-            const str = String(val).trim();
-            return str === "" || str === "-" || str === "N/A" || str === "null" || str === "undefined";
+        // --- SORTING URUTAN PRODUK ---
+        function sortProducts(list) {
+            const categoryOrder = { "Konven": 1, "Syariah": 2, "HS": 3 };
+            return list.sort((a, b) => {
+                // 1. Berdasarkan Kategori (Konven -> Syariah -> HS)
+                let catA = categoryOrder[a.category] || 99;
+                let catB = categoryOrder[b.category] || 99;
+                if (catA !== catB) return catA - catB;
+
+                // 2. Berdasarkan Nama Perusahaan (A-Z)
+                let compA = String(a.company || "").toLowerCase();
+                let compB = String(b.company || "").toLowerCase();
+                if (compA !== compB) return compA.localeCompare(compB);
+
+                // 3. Berdasarkan Nama Produk (A-Z)
+                let nameA = String(a.name || "").toLowerCase();
+                let nameB = String(b.name || "").toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
         }
 
-        function formatListText(val) {
-            if (isEmptyVal(val)) return "-";
-            let text = String(val).trim();
-            text = text.replace(/\r\n|\r|\n/g, '<br>');
-            text = text.replace(/\s+-\s+(?=[A-Za-z])/g, '<br>- ');
-            return text;
-        }
-
-        function getChannelIcon(channelName) {
-            const channel = String(channelName).toLowerCase();
-            if (channel.includes("bancassurance")) return "fa-building-columns";
-            if (channel.includes("agency") || channel.includes("agen")) return "fa-user-tie";
-            if (channel.includes("direct")) return "fa-paper-plane"; 
-            if (channel.includes("corporate") || channel.includes("group")) return "fa-users";
-            return "fa-diagram-project";
-        }
-
-        // --- LOAD DATA DARI GOOGLE SHEETS (SECARA DINAMIS) ---
+        // --- LOAD & REFRESH DATA DARI GOOGLE SHEETS ---
         let sheetsProcessed = 0;
         let sheetsFailed = 0;
 
         function fetchAllSheetData() {
+            const icon = document.getElementById("refreshIcon");
+            if(icon) icon.classList.add("fa-spin");
+
             products = [];
             dynamicColumns = [];
             sheetsProcessed = 0;
@@ -360,7 +413,6 @@
                     rows = rows.slice(1);
                 }
 
-                // Kumpulkan kolom dinamis baru yang belum terdaftar
                 cols.forEach(col => {
                     if (col && !["Product Name", "Company Name", "Distribution Channel", "Currency", "Product Type", "Par/Non Par"].includes(col)) {
                         if (!dynamicColumns.includes(col)) dynamicColumns.push(col);
@@ -373,7 +425,7 @@
                     const getVal = (colName) => {
                         const cIdx = cols.findIndex(c => c.toLowerCase() === colName.toLowerCase());
                         if (cIdx !== -1 && row.c[cIdx] && row.c[cIdx].v !== null && row.c[cIdx].v !== undefined) {
-                            return row.c[cIdx].f ? row.c[cIdx].f : String(row.c[cIdx].v);
+                            return sanitizeValue(row.c[cIdx].f ? row.c[cIdx].f : String(row.c[cIdx].v));
                         }
                         return "-";
                     };
@@ -383,7 +435,6 @@
 
                     if (prodName === "-" && compName === "-") return;
 
-                    // Buat objek produk dengan menyimpan seluruh atribut dinamis
                     let pObj = {
                         id: products.length + 1,
                         category: categoryName,
@@ -393,7 +444,7 @@
                         currency: getVal("Currency"),
                         productType: getVal("Product Type"),
                         par: getVal("Par/Non Par"),
-                        attributes: {} // Menyimpan semua kolom benefit/fitur secara dinamis
+                        attributes: {}
                     };
 
                     cols.forEach(col => {
@@ -412,6 +463,9 @@
         function checkAllSheetsLoaded() {
             sheetsProcessed++;
             if (sheetsProcessed + sheetsFailed === SHEET_TABS.length) {
+                const icon = document.getElementById("refreshIcon");
+                if(icon) icon.classList.remove("fa-spin");
+
                 if (products.length === 0) {
                     document.getElementById("loadingIndicator").innerHTML = `
                         <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Data kosong atau tidak ada tab Konven, Syariah, atau HS.</p>`;
@@ -421,6 +475,9 @@
                 document.getElementById("loadingIndicator").classList.add("hidden");
                 document.getElementById("deckGrid").classList.remove("hidden");
                 
+                // Urutkan produk secara hierarkis
+                products = sortProducts(products);
+
                 populateAllDropdowns();
                 currentlyVisibleProducts = [...products]; 
                 renderDeck(currentlyVisibleProducts);
@@ -456,7 +513,6 @@
                 const card = document.createElement("div");
                 card.className = `bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'} hover:shadow-md transition p-5 flex flex-col justify-between relative cursor-pointer`;
                 
-                // Cari Death Benefit atau atribut pertama untuk preview di kartu
                 let previewBenefitKey = Object.keys(p.attributes).find(k => k.toLowerCase().includes("death benefit")) || Object.keys(p.attributes)[0] || "";
                 let previewVal = previewBenefitKey ? p.attributes[previewBenefitKey] : "-";
 
@@ -472,7 +528,7 @@
                         <h3 class="font-bold text-gray-800 text-base mb-1" onclick="openDetailModal(${p.id})">${p.name}</h3>
                         <p class="text-xs text-gray-500 mb-3"><i class="fa-solid ${getChannelIcon(p.channel)} me-1"></i> ${p.channel} &bull; <span class="italic">${p.productType}</span></p>
                         
-                        ${previewBenefitKey ? `
+                        ${previewBenefitKey && !isEmptyVal(previewVal) ? `
                         <div class="text-xs bg-gray-50 p-2.5 rounded-lg text-gray-600 mb-3 line-clamp-3">
                             <strong class="text-gray-800 block">${previewBenefitKey}:</strong> ${formatListText(previewVal)}
                         </div>` : ''}
@@ -502,6 +558,8 @@
 
                 return matchSearch && matchCat && matchComp && matchType && matchChan && matchCurr;
             });
+
+            currentlyVisibleProducts = sortProducts(currentlyVisibleProducts);
             renderDeck(currentlyVisibleProducts);
         }
 
@@ -542,26 +600,22 @@
             renderDeck(currentlyVisibleProducts);
         }
 
-        // --- KOMPARASI DINAMIS (Membaca seluruh atribut otomatis) ---
         function openComparisonModal() {
             const container = document.getElementById("modalTableContainer");
             currentComparisonProducts = products.filter(p => selectedProductIds.includes(p.id));
 
-            // Daftar atribut dasar
             let fixedFeatures = [
                 { label: "Sistem Kategori", key: "category", isAttr: false },
                 { label: "Channel Distribusi", key: "channel", isAttr: false },
                 { label: "Tipe Produk", key: "productType", isAttr: false }
             ];
 
-            // Tambahkan semua atribut dinamis dari Sheets
             let allFeatures = [...fixedFeatures];
             dynamicColumns.forEach(col => {
                 const isBenefit = col.toLowerCase().includes("benefit") || col.toLowerCase().includes("bonus") || col.toLowerCase().includes("rider");
                 allFeatures.push({ label: col, key: col, isAttr: true, isHighlight: isBenefit });
             });
 
-            // Tampilkan hanya atribut yang memiliki isi di antara produk terpilih
             currentComparisonFeatures = allFeatures.filter(feat => {
                 return currentComparisonProducts.some(p => {
                     let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
@@ -621,7 +675,7 @@
                 let rowData = [feat.label];
                 currentComparisonProducts.forEach(p => {
                     let cellVal = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
-                    if (isEmptyVal(cellVal)) cellVal = "-";
+                    cellVal = sanitizeValue(cellVal);
                     cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
                     rowData.push(cellVal);
                 });
@@ -643,13 +697,23 @@
             }
         }
 
-        // --- DETAIL MODAL DINAMIS ---
+        // --- DETAIL & EDIT MODAL PRODUK ---
         function openDetailModal(id) {
             const p = products.find(prod => prod.id === id);
             if (!p) return;
 
+            currentActiveProduct = p;
+            isEditMode = false;
+            
+            document.getElementById("btnToggleEdit").classList.remove("hidden");
+            document.getElementById("detailEditFooter").classList.add("hidden");
             document.getElementById("detailTitle").textContent = p.name;
             
+            renderDetailBodyView(p);
+            document.getElementById("detailModal").classList.remove("hidden");
+        }
+
+        function renderDetailBodyView(p) {
             let basicDetailsHTML = `
                 <div class="detail-row"><span class="detail-label">Perusahaan:</span> ${p.company}</div>
                 <div class="detail-row"><span class="detail-label">Kategori Sistem:</span> ${p.category}</div>
@@ -678,14 +742,135 @@
                     ${attributesHTML || '<p class="text-xs text-gray-500">Tidak ada rincian tambahan.</p>'}
                 </div>
             `;
-            document.getElementById("detailModal").classList.remove("hidden");
+        }
+
+        function toggleEditMode() {
+            if (!currentActiveProduct) return;
+            isEditMode = true;
+
+            document.getElementById("btnToggleEdit").classList.add("hidden");
+            document.getElementById("detailEditFooter").classList.remove("hidden");
+
+            const p = currentActiveProduct;
+            let html = `
+                <div class="space-y-3 text-xs">
+                    <div class="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-blue-800 font-semibold mb-3">
+                        <i class="fa-solid fa-circle-info me-1"></i> Mengedit Produk: <strong>${p.name}</strong> (${p.category})
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Company Name</label>
+                        <input type="text" id="edit_company" value="${p.company}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-gray-700 mb-1">Product Type</label>
+                            <input type="text" id="edit_productType" value="${p.productType}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-gray-700 mb-1">Distribution Channel</label>
+                            <input type="text" id="edit_channel" value="${p.channel}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Currency</label>
+                        <input type="text" id="edit_currency" value="${p.currency}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+
+                    <hr class="my-3">
+                    <h5 class="font-bold text-blue-900 text-sm mb-2">Manfaat & Atribut Detail</h5>
+            `;
+
+            dynamicColumns.forEach(col => {
+                let currentVal = p.attributes[col] || "-";
+                html += `
+                    <div class="mt-2">
+                        <label class="block font-bold text-gray-700 mb-1">${col}</label>
+                        <textarea id="edit_attr_${col}" rows="3" class="w-full border rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">${currentVal === "-" ? "" : currentVal}</textarea>
+                    </div>
+                `;
+            });
+
+            html += `</div>`;
+            document.getElementById("detailBody").innerHTML = html;
+        }
+
+        function cancelEditMode() {
+            if (currentActiveProduct) {
+                openDetailModal(currentActiveProduct.id);
+            }
+        }
+
+        async function saveProductEdit() {
+            if (!currentActiveProduct) return;
+
+            const p = currentActiveProduct;
+            const btnSave = document.getElementById("btnSaveProductEdit");
+            btnSave.disabled = true;
+            btnSave.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...`;
+
+            // Ambil data dari form input
+            const newCompany = document.getElementById("edit_company").value.trim() || "-";
+            const newType = document.getElementById("edit_productType").value.trim() || "-";
+            const newChannel = document.getElementById("edit_channel").value.trim() || "-";
+            const newCurr = document.getElementById("edit_currency").value.trim() || "-";
+
+            let updatedAttr = {};
+            dynamicColumns.forEach(col => {
+                let val = document.getElementById(`edit_attr_${col}`).value.trim();
+                updatedAttr[col] = sanitizeValue(val);
+            });
+
+            // Susun baris lengkap sesuai Master Schema
+            let masterSchema = [
+                "Product Name", "Company Name", "Par/Non Par", "Product Type", 
+                "Distribution Channel", "Currency", ...dynamicColumns
+            ];
+
+            let rowData = masterSchema.map(colName => {
+                if (colName === "Product Name") return p.name;
+                if (colName === "Company Name") return newCompany;
+                if (colName === "Par/Non Par") return p.par || "-";
+                if (colName === "Product Type") return newType;
+                if (colName === "Distribution Channel") return newChannel;
+                if (colName === "Currency") return newCurr;
+                return updatedAttr[colName] || "-";
+            });
+
+            try {
+                const payload = {
+                    action: "update",
+                    sheetName: p.category,
+                    productName: p.name,
+                    data: rowData
+                };
+
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+
+                closeDetailModal();
+                fetchAllSheetData();
+
+            } catch (err) {
+                console.error(err);
+                alert("Gagal meng-update data ke Google Sheets. Pastikan jaringan internet stabil.");
+                btnSave.disabled = false;
+                btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan`;
+            }
         }
 
         function closeDetailModal() { 
             document.getElementById("detailModal").classList.add("hidden"); 
+            currentActiveProduct = null;
         }
 
-        // --- UPLOAD EXCEL LOGIC (DYNAMIC PARSER) ---
+        // --- UPLOAD EXCEL LOGIC (DENGAN CEK DUPLIKASI & PARSER BENEFIT) ---
         function openUploadModal() {
             document.getElementById("uploadModal").classList.remove("hidden");
             document.getElementById("excelFileInput").value = "";
@@ -718,10 +903,27 @@
                     const data = new Uint8Array(e.target.result);
                     const workbook = XLSX.read(data, { type: 'array' });
                     
-                    parsedUploadRows = parseExcelToSheetsSchema(workbook);
+                    let allParsed = parseExcelToSheetsSchema(workbook);
 
-                    if (parsedUploadRows.length === 0) {
-                        previewArea.innerHTML = `<p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation"></i> Tidak ada data produk yang terdeteksi di dalam file Excel ini.</p>`;
+                    // --- FITUR CEK DUPLIKASI PRODUK ---
+                    let existingProductNames = products.map(p => p.name.toLowerCase().trim());
+                    parsedUploadRows = [];
+                    let duplicateCount = 0;
+
+                    allParsed.forEach(row => {
+                        let prodName = String(row[0]).toLowerCase().trim();
+                        if (existingProductNames.includes(prodName)) {
+                            duplicateCount++;
+                        } else {
+                            parsedUploadRows.push(row);
+                        }
+                    });
+
+                    if (allParsed.length === 0) {
+                        previewArea.innerHTML = `<p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation"></i> Tidak ada data produk yang terdeteksi.</p>`;
+                        submitBtn.disabled = true;
+                    } else if (parsedUploadRows.length === 0) {
+                        previewArea.innerHTML = `<p class="text-amber-600 font-semibold"><i class="fa-solid fa-triangle-exclamation"></i> Semua ${duplicateCount} produk di file ini sudah ada di database master.</p>`;
                         submitBtn.disabled = true;
                     } else {
                         let sampleNames = parsedUploadRows.map(r => r[0]).slice(0, 3).join(", ");
@@ -729,8 +931,9 @@
 
                         previewArea.innerHTML = `
                             <p class="font-bold text-green-700"><i class="fa-solid fa-circle-check"></i> File Valid!</p>
-                            <p><strong>Terdeteksi:</strong> ${parsedUploadRows.length} Produk</p>
-                            <p class="text-gray-500 italic">Pratinjau Produk: ${sampleNames}</p>
+                            <p><strong>Siap Diunggah:</strong> ${parsedUploadRows.length} Produk Baru</p>
+                            ${duplicateCount > 0 ? `<p class="text-amber-600 font-medium"><i class="fa-solid fa-ban me-1"></i>${duplicateCount} Produk dilewati (sudah ada di database)</p>` : ''}
+                            <p class="text-gray-500 italic mt-1">Pratinjau: ${sampleNames}</p>
                         `;
                         submitBtn.disabled = false;
                     }
@@ -747,7 +950,7 @@
             reader.readAsArrayBuffer(file);
         }
 
-        // SMART DYNAMIC PARSER
+        // SMART DYNAMIC PARSER PERBAIKAN BENEFITS & N/A
         function parseExcelToSheetsSchema(workbook) {
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
@@ -755,13 +958,12 @@
 
             if (!rawData || rawData.length === 0) return [];
 
-            // Urutan Kolom Standar di Master Google Sheets
             let masterSchema = [
                 "Product Name", "Company Name", "Par/Non Par", "Product Type", 
                 "Distribution Channel", "Currency", ...dynamicColumns
             ];
 
-            // Case A: Excel Flat / Horizontal (Header di baris 0)
+            // Case A: Excel Flat / Horizontal
             const headerRow = rawData[0].map(c => String(c).trim().toLowerCase());
             if (headerRow.includes("product name") || headerRow.includes("company name")) {
                 let result = [];
@@ -771,14 +973,15 @@
 
                     let mappedRow = masterSchema.map(colName => {
                         let idx = headerRow.findIndex(h => h === colName.toLowerCase());
-                        return (idx !== -1 && row[idx] !== undefined && String(row[idx]).trim() !== "") ? String(row[idx]).trim() : "-";
+                        let val = (idx !== -1 && row[idx] !== undefined) ? String(row[idx]).trim() : "-";
+                        return sanitizeValue(val);
                     });
                     result.push(mappedRow);
                 }
                 return result;
             }
 
-            // Case B: Excel Vertikal (seperti example.xlsx)
+            // Case B: Excel Vertikal Custom (seperti example.xlsx)
             let resultRows = [];
             let colCount = Math.max(...rawData.map(r => r.length));
 
@@ -794,41 +997,38 @@
                 else if (lowerName.includes("allianz")) company = "Allianz";
                 else if (lowerName.includes("pru")) company = "Prudential";
 
-                // Pindai semua baris secara dinamis berdasarkan nama di Kolom A
                 let attrMap = {};
                 for (let r = 0; r < rawData.length; r++) {
                     let label = String(rawData[r][0] || "").trim();
+                    let lowerLabel = label.toLowerCase();
                     let val = String(rawData[r][c] || "").trim();
 
                     if (val && val !== "-" && val !== "null") {
-                        // Jika ada label di kolom A (misal: "Critical Illness Benefit:")
-                        if (label) {
-                            let cleanLabel = label.replace(/:$/, '').trim();
-                            attrMap[cleanLabel] = val;
-                        } else {
-                            // Jika label di kolom A kosong, cek apakah ada prefix di isi sel
+                        // PERBAIKAN LOGIKA: Jika label kosong ATAU bertuliskan "benefits/benefit"
+                        if (!label || lowerLabel === "benefits" || lowerLabel === "benefit" || lowerLabel.startsWith("benefit")) {
                             let colonIdx = val.indexOf(":");
                             if (colonIdx > 0 && colonIdx < 30) {
                                 let key = val.substring(0, colonIdx).trim();
                                 let cleanVal = val.substring(colonIdx + 1).trim();
-                                attrMap[key] = cleanVal;
+                                attrMap[key] = sanitizeValue(cleanVal);
                             }
+                        } else {
+                            let cleanLabel = label.replace(/:$/, '').trim();
+                            attrMap[cleanLabel] = sanitizeValue(val);
                         }
                     }
                 }
 
-                // Petakan ke Master Schema
                 let mappedRow = masterSchema.map(colName => {
                     if (colName === "Product Name") return prodName;
                     if (colName === "Company Name") return company;
-                    if (colName === "Par/Non Par") return attrMap["Par/Non Par"] || "-";
-                    if (colName === "Product Type") return attrMap["Product Type"] || "-";
-                    if (colName === "Distribution Channel") return attrMap["Distribution Channel"] || attrMap["Channel Distribution"] || "-";
-                    if (colName === "Currency") return attrMap["Currency"] || "-";
+                    if (colName === "Par/Non Par") return sanitizeValue(attrMap["Par/Non Par"]);
+                    if (colName === "Product Type") return sanitizeValue(attrMap["Product Type"]);
+                    if (colName === "Distribution Channel") return sanitizeValue(attrMap["Distribution Channel"] || attrMap["Channel Distribution"]);
+                    if (colName === "Currency") return sanitizeValue(attrMap["Currency"]);
 
-                    // Cocokkan atribut dinamis
                     let matchedKey = Object.keys(attrMap).find(k => k.toLowerCase() === colName.toLowerCase());
-                    return matchedKey ? attrMap[matchedKey] : "-";
+                    return matchedKey ? sanitizeValue(attrMap[matchedKey]) : "-";
                 });
 
                 resultRows.push(mappedRow);
@@ -849,6 +1049,7 @@
 
             try {
                 const payload = {
+                    action: "append",
                     sheetName: targetSheet,
                     data: parsedUploadRows
                 };
