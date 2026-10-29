@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insurance Database and Comparison Maker</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Pustaka SheetJS untuk Ekspor & Import Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    
+    <style>
+        .detail-row {
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 0.75rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.875rem;
+            color: #374151;
+        }
+        .detail-label {
+            font-weight: 700;
+            color: #000;
+            margin-right: 0.25rem;
+        }
+        .benefit-label {
+            font-weight: 700;
+            color: #000;
+            display: block;
+            margin-top: 0.5rem;
+        }
+        .benefit-value {
+            color: #4b5563;
+        }
+        .dropdown-content::-webkit-scrollbar {
+            width: 6px;
+        }
+        .dropdown-content::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans pb-24">
+
+    <!-- Navbar Header -->
+    <header class="bg-blue-900 text-white p-4 shadow-md sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-3">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <i class="fa-solid me-1 fa-shield-halved"></i> Insurance Database and Comparison Maker
+                <!-- Link Buka Master Google Sheets -->
+                <a href="https://docs.google.com/spreadsheets/d/1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI/edit" target="_blank" title="Buka Master Database" class="ml-2 text-blue-300 hover:text-white transition">
+                    <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
+                </a>
+            </h1>
+            
+            <div class="flex items-center gap-2">
+                <!-- Tombol Refresh Data -->
+                <button onclick="fetchAllSheetData()" class="bg-blue-800 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition" title="Refresh Sinkronisasi Data">
+                    <i class="fa-solid fa-rotate text-sm" id="refreshIcon"></i> Refresh Data
+                </button>
+
+                <!-- Tombol Upload Excel -->
+                <button onclick="openUploadModal()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition">
+                    <i class="fa-solid fa-file-arrow-up text-sm"></i> Upload Excel
+                </button>
+                
+                <span class="text-xs bg-blue-950 px-3 py-2 rounded-lg text-blue-200 border border-blue-800 font-medium" id="totalProductCount">Memuat data...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-4 md:p-6">
+        <!-- Filter & Search Bar -->
+        <div class="bg-white p-4 rounded-xl shadow-sm mb-6 flex flex-col md:flex-row gap-3 items-center">
+            <!-- Search Box -->
+            <div class="relative w-full md:w-64 shrink-0">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-gray-400"></i>
+                <input type="text" id="searchInput" oninput="filterData()" placeholder="Cari nama produk..." 
+                       class="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+            </div>
+
+            <!-- Custom Multi-Select Dropdowns -->
+            <div class="flex flex-wrap gap-2 w-full justify-end" id="filterContainer">
+                
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[140px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('categoryDropdown', event)">
+                        <span id="categoryBtnText" class="truncate font-medium">Semua Kategori</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="categoryDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[160px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('companyDropdown', event)">
+                        <span id="companyBtnText" class="truncate font-medium">Semua Perusahaan</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="companyDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[160px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('typeDropdown', event)">
+                        <span id="typeBtnText" class="truncate font-medium">Semua Tipe</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="typeDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[150px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('channelDropdown', event)">
+                        <span id="channelBtnText" class="truncate font-medium">Semua Channel</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="channelDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+                <div class="relative custom-select">
+                    <button class="w-full md:w-auto min-w-[140px] border text-sm rounded-lg px-3 py-2 bg-white text-gray-700 text-left flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleDropdown('currencyDropdown', event)">
+                        <span id="currencyBtnText" class="truncate font-medium">Semua Mata Uang</span>
+                        <i class="fa-solid fa-chevron-down text-xs ml-2 text-gray-400"></i>
+                    </button>
+                    <div id="currencyDropdown" class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto p-2"></div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Tampilan Loading -->
+        <div id="loadingIndicator" class="text-center py-12 text-gray-500">
+            <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-3 text-blue-500"></i>
+            <p>Menghubungkan & Mensinkronisasi Tab Data...</p>
+        </div>
+
+        <!-- AppSheet Deck-Style Grid -->
+        <div id="deckGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
+    </main>
+
+    <!-- Floating Comparison Bar -->
+    <div id="compareBar" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 transition-all transform translate-y-32 z-40">
+        <span class="text-sm font-medium whitespace-nowrap"><span id="selectedCount" class="font-bold text-blue-400">0</span> produk dipilih</span>
+        <button onclick="selectAllVisible()" class="text-gray-300 hover:text-white text-xs font-semibold px-2 py-1 rounded transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
+            <i class="fa-solid fa-check-double me-1"></i> Pilih Semua
+        </button>
+        <button onclick="openComparisonModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition whitespace-nowrap">
+            <i class="fa-solid fa-columns me-1"></i> Bandingkan
+        </button>
+        <button onclick="clearSelection()" class="text-gray-400 hover:text-white text-xs underline whitespace-nowrap">Batal</button>
+    </div>
+
+    <!-- Modal Upload Excel ke Google Sheets -->
+    <div id="uploadModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 bg-green-700 text-white flex justify-between items-center">
+                <h3 class="font-bold text-base flex items-center gap-2">
+                    <i class="fa-solid fa-file-excel text-lg"></i> Upload Database Excel ke Google Sheets
+                </h3>
+                <button onclick="closeUploadModal()" class="text-gray-200 hover:text-white text-xl">&times;</button>
+            </div>
+            
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">Target Tab Google Sheets:</label>
+                    <select id="uploadTargetSheet" class="w-full border text-sm rounded-lg p-2.5 bg-gray-50 focus:ring-2 focus:ring-green-500 outline-none">
+                        <option value="Konven">Konven</option>
+                        <option value="Syariah">Syariah</option>
+                        <option value="HS">HS</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">Pilih File Excel (.xlsx / .xls):</label>
+                    <input type="file" id="excelFileInput" accept=".xlsx, .xls" onchange="previewExcelFile()"
+                           class="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer border rounded-lg p-1">
+                </div>
+
+                <div id="uploadPreviewArea" class="hidden bg-gray-50 p-3 rounded-lg border text-xs space-y-1 text-gray-600 max-h-36 overflow-y-auto"></div>
+
+                <div class="pt-2 flex justify-end gap-2">
+                    <button onclick="closeUploadModal()" class="px-4 py-2 border rounded-lg text-xs font-semibold text-gray-600 hover:bg-gray-100">Batal</button>
+                    <button id="btnSubmitUpload" onclick="processAndUploadExcel()" disabled
+                            class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload ke Google Sheets
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Perbandingan Side-by-Side -->
+    <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 bg-gray-900 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-code-compare me-2 text-blue-400"></i>Perbandingan Produk</h3>
+                <div class="flex gap-4 items-center">
+                    <button onclick="downloadComparisonExcel()" class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition">
+                        <i class="fa-solid fa-file-excel"></i> Ekspor Excel
+                    </button>
+                    <button onclick="closeComparisonModal()" class="text-gray-400 hover:text-white text-xl ml-2">&times;</button>
+                </div>
+            </div>
+            <div class="p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer"></div>
+        </div>
+    </div>
+
+    <!-- Modal Detail & Edit Produk -->
+    <div id="detailModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 bg-blue-900 text-white flex justify-between items-center">
+                <h3 id="detailTitle" class="font-bold text-lg">Detail Produk</h3>
+                <div class="flex items-center gap-2">
+                    <button id="btnToggleEdit" onclick="toggleEditMode()" class="bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition flex items-center gap-1">
+                        <i class="fa-solid fa-pen-to-square"></i> Edit Produk
+                    </button>
+                    <button onclick="closeDetailModal()" class="text-gray-300 hover:text-white text-xl ml-1">&times;</button>
+                </div>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1" id="detailBody"></div>
+            <!-- Footer khusus tombol simpan saat Edit Mode -->
+            <div id="detailEditFooter" class="p-4 bg-gray-50 border-t flex justify-end gap-2 hidden">
+                <button onclick="cancelEditMode()" class="px-4 py-2 border rounded-lg text-xs font-semibold text-gray-600 hover:bg-gray-100">Batal</button>
+                <button id="btnSaveProductEdit" onclick="saveProductEdit()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPT LOGIKA UTAMA WEB -->
+    <script>
+        const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
+        const SHEET_TABS = ["Konven", "Syariah", "HS"];
+        const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzN9HcjcNz40HuLU3FrwunOuLiJ9CB4_kvoTc9DxmckLl12pG7GQUGKkbmVtrzBnf06/exec";
+
+        let products = [];
+        let selectedProductIds = [];
+        let currentlyVisibleProducts = []; 
+        let dynamicColumns = [];
+        let currentComparisonFeatures = [];
+        let currentComparisonProducts = [];
+
+        let currentActiveProduct = null;
+        let isEditMode = false;
+
+        let activeFilters = {
+            category: [],
+            company: [],
+            type: [],
+            channel: [],
+            currency: []
+        };
+
+        let parsedUploadRows = [];
+
+        // --- HELPER: PEMBERSIH TEKS N/A MENJADI STRIP ---
+        function sanitizeValue(val) {
+            if (!val) return "-";
+            let str = String(val).trim();
+            if (/^n\/?a\.?$/i.test(str) || str === "" || str === "null" || str === "undefined") {
+                return "-";
+            }
+            return str;
+        }
+
+        function isEmptyVal(val) {
+            const clean = sanitizeValue(val);
+            return clean === "-";
+        }
+
+        function formatListText(val) {
+            const clean = sanitizeValue(val);
+            if (clean === "-") return "-";
+            let text = clean.replace(/\r\n|\r|\n/g, '<br>');
+            text = text.replace(/\s+-\s+(?=[A-Za-z])/g, '<br>- ');
+            return text;
+        }
+
+        function getChannelIcon(channelName) {
+            const channel = String(channelName).toLowerCase();
+            if (channel.includes("bancassurance")) return "fa-building-columns";
+            if (channel.includes("agency") || channel.includes("agen")) return "fa-user-tie";
+            if (channel.includes("direct")) return "fa-paper-plane"; 
+            if (channel.includes("corporate") || channel.includes("group")) return "fa-users";
+            return "fa-diagram-project";
+        }
+
+        // --- DROPDOWN MULTI-SELECT ---
+        function toggleDropdown(id, event) {
+            event.stopPropagation();
+            document.querySelectorAll('.dropdown-content').forEach(el => {
+                if (el.id !== id) el.classList.add('hidden');
+            });
+            document.getElementById(id).classList.toggle('hidden');
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.custom-select')) {
+                document.querySelectorAll('.dropdown-content').forEach(el => el.classList.add('hidden'));
+            }
+        });
+
+        function updateFilterState(filterKey, value, isChecked) {
+            if (isChecked) {
+                activeFilters[filterKey].push(value);
+            } else {
+                activeFilters[filterKey] = activeFilters[filterKey].filter(v => v !== value);
+            }
+            updateFilterButtonText(filterKey);
+            filterData();
+        }
+
+        function updateFilterButtonText(key) {
+            const btn = document.getElementById(`${key}BtnText`);
+            const count = activeFilters[key].length;
+            const defaultLabels = {
+                category: "Semua Kategori",
+                company: "Semua Perusahaan",
+                type: "Semua Tipe",
+                channel: "Semua Channel",
+                currency: "Semua Mata Uang"
+            };
+
+            if (count === 0) {
+                btn.textContent = defaultLabels[key];
+                btn.classList.remove("text-blue-600", "font-bold");
+            } else if (count === 1) {
+                btn.textContent = activeFilters[key][0];
+                btn.classList.add("text-blue-600", "font-bold");
+            } else {
+                btn.textContent = `${count} Dipilih`;
+                btn.classList.add("text-blue-600", "font-bold");
+            }
+        }
+
+        function buildDropdownUI(filterKey, optionsArray) {
+            const container = document.getElementById(`${filterKey}Dropdown`);
+            container.innerHTML = "";
+            optionsArray.forEach(opt => {
+                const label = document.createElement('label');
+                label.className = "flex items-start space-x-3 p-2 hover:bg-gray-100 cursor-pointer rounded text-sm text-gray-700 transition";
+                label.innerHTML = `
+                    <input type="checkbox" value="${opt}" class="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4 accent-blue-600 cursor-pointer" 
+                           onchange="updateFilterState('${filterKey}', this.value, this.checked)">
+                    <span class="flex-1">${opt}</span>
+                `;
+                container.appendChild(label);
+            });
+        }
+
+        // --- SORTING URUTAN PRODUK ---
+        function sortProducts(list) {
+            const categoryOrder = { "Konven": 1, "Syariah": 2, "HS": 3 };
+            return list.sort((a, b) => {
+                // 1. Berdasarkan Kategori (Konven -> Syariah -> HS)
+                let catA = categoryOrder[a.category] || 99;
+                let catB = categoryOrder[b.category] || 99;
+                if (catA !== catB) return catA - catB;
+
+                // 2. Berdasarkan Nama Perusahaan (A-Z)
+                let compA = String(a.company || "").toLowerCase();
+                let compB = String(b.company || "").toLowerCase();
+                if (compA !== compB) return compA.localeCompare(compB);
+
+                // 3. Berdasarkan Nama Produk (A-Z)
+                let nameA = String(a.name || "").toLowerCase();
+                let nameB = String(b.name || "").toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+        }
+
+        // --- LOAD & REFRESH DATA DARI GOOGLE SHEETS ---
+        let sheetsProcessed = 0;
+        let sheetsFailed = 0;
+
+        function fetchAllSheetData() {
+            const icon = document.getElementById("refreshIcon");
+            if(icon) icon.classList.add("fa-spin");
+
+            products = [];
+            dynamicColumns = [];
+            sheetsProcessed = 0;
+            sheetsFailed = 0;
+            document.getElementById("loadingIndicator").classList.remove("hidden");
+            document.getElementById("deckGrid").classList.add("hidden");
+
+            SHEET_TABS.forEach((tabName, index) => {
+                window[`prosesDataSheet${index}`] = function(jsonData) {
+                    processSheetData(jsonData, tabName);
+                    checkAllSheetsLoaded();
+                };
+
+                const script = document.createElement('script');
+                script.onerror = () => {
+                    sheetsFailed++;
+                    checkAllSheetsLoaded();
+                };
+                script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${encodeURIComponent(tabName)}&headers=1&tqx=responseHandler:prosesDataSheet${index}`;
+                document.body.appendChild(script);
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", fetchAllSheetData);
+
+        function processSheetData(jsonData, categoryName) {
+            try {
+                let cols = jsonData.table.cols.map(c => c ? (c.label || "").trim() : ""); 
+                let rows = jsonData.table.rows;
+
+                const hasValidLabels = cols.some(l => l && l !== "" && !/^[A-Z]+$/.test(l));
+                if (!hasValidLabels && rows.length > 0) {
+                    cols = rows[0].c.map(cell => (cell && cell.v !== null && cell.v !== undefined) ? String(cell.v).trim() : "");
+                    rows = rows.slice(1);
+                }
+
+                cols.forEach(col => {
+                    if (col && !["Product Name", "Company Name", "Distribution Channel", "Currency", "Product Type", "Par/Non Par"].includes(col)) {
+                        if (!dynamicColumns.includes(col)) dynamicColumns.push(col);
+                    }
+                });
+
+                rows.forEach((row) => {
+                    if (!row || !row.c) return;
+
+                    const getVal = (colName) => {
+                        const cIdx = cols.findIndex(c => c.toLowerCase() === colName.toLowerCase());
+                        if (cIdx !== -1 && row.c[cIdx] && row.c[cIdx].v !== null && row.c[cIdx].v !== undefined) {
+                            return sanitizeValue(row.c[cIdx].f ? row.c[cIdx].f : String(row.c[cIdx].v));
+                        }
+                        return "-";
+                    };
+
+                    const prodName = getVal("Product Name");
+                    const compName = getVal("Company Name");
+
+                    if (prodName === "-" && compName === "-") return;
+
+                    let pObj = {
+                        id: products.length + 1,
+                        category: categoryName,
+                        company: compName,
+                        name: prodName,
+                        channel: getVal("Distribution Channel"),
+                        currency: getVal("Currency"),
+                        productType: getVal("Product Type"),
+                        par: getVal("Par/Non Par"),
+                        attributes: {}
+                    };
+
+                    cols.forEach(col => {
+                        if (col && !["Product Name", "Company Name", "Distribution Channel", "Currency", "Product Type", "Par/Non Par"].includes(col)) {
+                            pObj.attributes[col] = getVal(col);
+                        }
+                    });
+
+                    products.push(pObj);
+                });
+            } catch (err) {
+                console.error(`Error tab ${categoryName}:`, err);
+            }
+        }
+
+        function checkAllSheetsLoaded() {
+            sheetsProcessed++;
+            if (sheetsProcessed + sheetsFailed === SHEET_TABS.length) {
+                const icon = document.getElementById("refreshIcon");
+                if(icon) icon.classList.remove("fa-spin");
+
+                if (products.length === 0) {
+                    document.getElementById("loadingIndicator").innerHTML = `
+                        <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Data kosong atau tidak ada tab Konven, Syariah, atau HS.</p>`;
+                    return;
+                }
+
+                document.getElementById("loadingIndicator").classList.add("hidden");
+                document.getElementById("deckGrid").classList.remove("hidden");
+                
+                // Urutkan produk secara hierarkis
+                products = sortProducts(products);
+
+                populateAllDropdowns();
+                currentlyVisibleProducts = [...products]; 
+                renderDeck(currentlyVisibleProducts);
+            }
+        }
+
+        function populateAllDropdowns() {
+            buildDropdownUI('category', [...new Set(products.map(p => p.category))].filter(c => c));
+            buildDropdownUI('company', [...new Set(products.map(p => p.company))].filter(c => c && c !== "-"));
+            buildDropdownUI('type', [...new Set(products.map(p => p.productType))].filter(t => t && t !== "-"));
+            buildDropdownUI('channel', [...new Set(products.map(p => p.channel))].filter(c => c && c !== "-"));
+            buildDropdownUI('currency', [...new Set(products.map(p => p.currency))].filter(c => c && c !== "-"));
+        }
+
+        function getCategoryBadge(category) {
+            if(category === "Konven") return `<span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
+            if(category === "Syariah") return `<span class="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
+            return `<span class="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
+        }
+
+        function renderDeck(data) {
+            const grid = document.getElementById("deckGrid");
+            document.getElementById("totalProductCount").textContent = `${data.length} Produk`;
+            grid.innerHTML = "";
+
+            if (data.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-500">Tidak ada produk ditemukan sesuai filter</div>`;
+                return;
+            }
+
+            data.forEach(p => {
+                const isSelected = selectedProductIds.includes(p.id);
+                const card = document.createElement("div");
+                card.className = `bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'} hover:shadow-md transition p-5 flex flex-col justify-between relative cursor-pointer`;
+                
+                let previewBenefitKey = Object.keys(p.attributes).find(k => k.toLowerCase().includes("death benefit")) || Object.keys(p.attributes)[0] || "";
+                let previewVal = previewBenefitKey ? p.attributes[previewBenefitKey] : "-";
+
+                card.innerHTML = `
+                    <div>
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">${p.company}</span>
+                            <div class="flex flex-col items-end gap-1">
+                                ${getCategoryBadge(p.category)}
+                                <span class="text-xs text-gray-500 font-medium">${p.currency}</span>
+                            </div>
+                        </div>
+                        <h3 class="font-bold text-gray-800 text-base mb-1" onclick="openDetailModal(${p.id})">${p.name}</h3>
+                        <p class="text-xs text-gray-500 mb-3"><i class="fa-solid ${getChannelIcon(p.channel)} me-1"></i> ${p.channel} &bull; <span class="italic">${p.productType}</span></p>
+                        
+                        ${previewBenefitKey && !isEmptyVal(previewVal) ? `
+                        <div class="text-xs bg-gray-50 p-2.5 rounded-lg text-gray-600 mb-3 line-clamp-3">
+                            <strong class="text-gray-800 block">${previewBenefitKey}:</strong> ${formatListText(previewVal)}
+                        </div>` : ''}
+                    </div>
+
+                    <div class="pt-3 border-t flex justify-between items-center text-xs">
+                        <button onclick="openDetailModal(${p.id})" class="text-blue-600 hover:underline font-medium">Lihat Detail</button>
+                        <button onclick="toggleSelectProduct(${p.id}, event)" class="px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 hover:bg-gray-50'}">
+                            <i class="fa-solid ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Dipilih' : 'Bandingkan'}
+                        </button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function filterData() {
+            const search = document.getElementById("searchInput").value.toLowerCase();
+
+            currentlyVisibleProducts = products.filter(p => {
+                const matchSearch = p.name.toLowerCase().includes(search) || p.company.toLowerCase().includes(search);
+                const matchCat  = activeFilters.category.length === 0 || activeFilters.category.includes(p.category);
+                const matchComp = activeFilters.company.length === 0 || activeFilters.company.includes(p.company);
+                const matchType = activeFilters.type.length === 0 || activeFilters.type.includes(p.productType);
+                const matchChan = activeFilters.channel.length === 0 || activeFilters.channel.some(f => p.channel.includes(f));
+                const matchCurr = activeFilters.currency.length === 0 || activeFilters.currency.some(f => p.currency.includes(f));
+
+                return matchSearch && matchCat && matchComp && matchType && matchChan && matchCurr;
+            });
+
+            currentlyVisibleProducts = sortProducts(currentlyVisibleProducts);
+            renderDeck(currentlyVisibleProducts);
+        }
+
+        function toggleSelectProduct(id, e) {
+            e.stopPropagation();
+            if (selectedProductIds.includes(id)) { 
+                selectedProductIds = selectedProductIds.filter(pid => pid !== id); 
+            } else { 
+                selectedProductIds.push(id); 
+            }
+            updateCompareBar();
+            renderDeck(currentlyVisibleProducts); 
+        }
+
+        function selectAllVisible() {
+            currentlyVisibleProducts.forEach(p => {
+                if (!selectedProductIds.includes(p.id)) {
+                    selectedProductIds.push(p.id);
+                }
+            });
+            updateCompareBar();
+            renderDeck(currentlyVisibleProducts);
+        }
+
+        function updateCompareBar() {
+            const bar = document.getElementById("compareBar");
+            document.getElementById("selectedCount").textContent = selectedProductIds.length;
+            if (selectedProductIds.length > 0) {
+                bar.classList.remove("translate-y-32");
+            } else {
+                bar.classList.add("translate-y-32");
+            }
+        }
+
+        function clearSelection() { 
+            selectedProductIds = []; 
+            updateCompareBar(); 
+            renderDeck(currentlyVisibleProducts);
+        }
+
+        function openComparisonModal() {
+            const container = document.getElementById("modalTableContainer");
+            currentComparisonProducts = products.filter(p => selectedProductIds.includes(p.id));
+
+            let fixedFeatures = [
+                { label: "Sistem Kategori", key: "category", isAttr: false },
+                { label: "Channel Distribusi", key: "channel", isAttr: false },
+                { label: "Tipe Produk", key: "productType", isAttr: false }
+            ];
+
+            let allFeatures = [...fixedFeatures];
+            dynamicColumns.forEach(col => {
+                const isBenefit = col.toLowerCase().includes("benefit") || col.toLowerCase().includes("bonus") || col.toLowerCase().includes("rider");
+                allFeatures.push({ label: col, key: col, isAttr: true, isHighlight: isBenefit });
+            });
+
+            currentComparisonFeatures = allFeatures.filter(feat => {
+                return currentComparisonProducts.some(p => {
+                    let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
+                    return !isEmptyVal(val);
+                });
+            });
+
+            container.innerHTML = `
+                <table class="w-full text-sm text-left border-collapse min-w-[600px]" id="comparisonTable">
+                    <thead>
+                        <tr class="bg-gray-100 border-b">
+                            <th class="p-3 font-semibold text-gray-700 w-48 sticky left-0 bg-gray-100 z-10 shadow-sm">Atribut / Fitur</th>
+                            ${currentComparisonProducts.map(p => `
+                                <th class="p-3 font-bold text-blue-900 border-l min-w-[240px]">
+                                    <div class="text-xs text-blue-600 font-normal">${p.company}</div>
+                                    ${p.name}
+                                </th>
+                            `).join('')}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y">
+                        ${currentComparisonFeatures.map(feat => {
+                            const rowBgClass = feat.isHighlight 
+                                ? 'font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm border-t-2 border-blue-100' 
+                                : 'font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm';
+                            const cellBgClass = feat.isHighlight ? 'text-xs bg-white border-t-2 border-blue-100' : '';
+
+                            return `
+                                <tr>
+                                    <td class="p-3 ${rowBgClass}">${feat.label}</td>
+                                    ${currentComparisonProducts.map(p => {
+                                        let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
+                                        return `<td class="p-3 border-l ${cellBgClass}">${formatListText(val)}</td>`;
+                                    }).join('')}
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById("compareModal").classList.remove("hidden");
+        }
+
+        function closeComparisonModal() { 
+            document.getElementById("compareModal").classList.add("hidden"); 
+        }
+
+        function downloadComparisonExcel() {
+            if (currentComparisonProducts.length === 0) return;
+            let ws_data = [];
+            
+            let headers = ["Atribut / Fitur"];
+            currentComparisonProducts.forEach(p => headers.push(p.company + " - " + p.name));
+            ws_data.push(headers);
+
+            currentComparisonFeatures.forEach(feat => {
+                let rowData = [feat.label];
+                currentComparisonProducts.forEach(p => {
+                    let cellVal = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
+                    cellVal = sanitizeValue(cellVal);
+                    cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
+                    rowData.push(cellVal);
+                });
+                ws_data.push(rowData);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Komparasi");
+
+            const today = new Date().toISOString().split('T')[0];
+            const fileName = `Komparasi_Asuransi_${today}.xlsx`;
+
+            if (window.pywebview) {
+                const b64Data = XLSX.write(wb, {type: 'base64', bookType: 'xlsx'});
+                window.pywebview.api.save_excel(b64Data, fileName);
+            } else {
+                XLSX.writeFile(wb, fileName);
+            }
+        }
+
+        // --- DETAIL & EDIT MODAL PRODUK ---
+        function openDetailModal(id) {
+            const p = products.find(prod => prod.id === id);
+            if (!p) return;
+
+            currentActiveProduct = p;
+            isEditMode = false;
+            
+            document.getElementById("btnToggleEdit").classList.remove("hidden");
+            document.getElementById("detailEditFooter").classList.add("hidden");
+            document.getElementById("detailTitle").textContent = p.name;
+            
+            renderDetailBodyView(p);
+            document.getElementById("detailModal").classList.remove("hidden");
+        }
+
+        function renderDetailBodyView(p) {
+            let basicDetailsHTML = `
+                <div class="detail-row"><span class="detail-label">Perusahaan:</span> ${p.company}</div>
+                <div class="detail-row"><span class="detail-label">Kategori Sistem:</span> ${p.category}</div>
+                <div class="detail-row"><span class="detail-label">Channel:</span> ${p.channel}</div>
+                <div class="detail-row"><span class="detail-label">Tipe Produk:</span> ${p.productType}</div>
+                <div class="detail-row"><span class="detail-label">Mata Uang:</span> ${p.currency}</div>
+            `;
+
+            let attributesHTML = "";
+            Object.keys(p.attributes).forEach(attrKey => {
+                let val = p.attributes[attrKey];
+                if (!isEmptyVal(val)) {
+                    attributesHTML += `
+                        <div class="mt-3">
+                            <span class="benefit-label">${attrKey}:</span>
+                            <span class="benefit-value">${formatListText(val)}</span>
+                        </div>
+                    `;
+                }
+            });
+
+            document.getElementById("detailBody").innerHTML = `
+                ${basicDetailsHTML}
+                <div class="pt-4 mt-2 border-t border-gray-200">
+                    <h4 class="font-bold text-blue-800 text-base mb-2">Manfaat & Ketentuan Produk</h4>
+                    ${attributesHTML || '<p class="text-xs text-gray-500">Tidak ada rincian tambahan.</p>'}
+                </div>
+            `;
+        }
+
+        function toggleEditMode() {
+            if (!currentActiveProduct) return;
+            isEditMode = true;
+
+            document.getElementById("btnToggleEdit").classList.add("hidden");
+            document.getElementById("detailEditFooter").classList.remove("hidden");
+
+            const p = currentActiveProduct;
+            let html = `
+                <div class="space-y-3 text-xs">
+                    <div class="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-blue-800 font-semibold mb-3">
+                        <i class="fa-solid fa-circle-info me-1"></i> Mengedit Produk: <strong>${p.name}</strong> (${p.category})
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Company Name</label>
+                        <input type="text" id="edit_company" value="${p.company}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-gray-700 mb-1">Product Type</label>
+                            <input type="text" id="edit_productType" value="${p.productType}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-gray-700 mb-1">Distribution Channel</label>
+                            <input type="text" id="edit_channel" value="${p.channel}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Currency</label>
+                        <input type="text" id="edit_currency" value="${p.currency}" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+
+                    <hr class="my-3">
+                    <h5 class="font-bold text-blue-900 text-sm mb-2">Manfaat & Atribut Detail</h5>
+            `;
+
+            dynamicColumns.forEach(col => {
+                let currentVal = p.attributes[col] || "-";
+                html += `
+                    <div class="mt-2">
+                        <label class="block font-bold text-gray-700 mb-1">${col}</label>
+                        <textarea id="edit_attr_${col}" rows="3" class="w-full border rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">${currentVal === "-" ? "" : currentVal}</textarea>
+                    </div>
+                `;
+            });
+
+            html += `</div>`;
+            document.getElementById("detailBody").innerHTML = html;
+        }
+
+        function cancelEditMode() {
+            if (currentActiveProduct) {
+                openDetailModal(currentActiveProduct.id);
+            }
+        }
+
+        async function saveProductEdit() {
+            if (!currentActiveProduct) return;
+
+            const p = currentActiveProduct;
+            const btnSave = document.getElementById("btnSaveProductEdit");
+            btnSave.disabled = true;
+            btnSave.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...`;
+
+            // Ambil data dari form input
+            const newCompany = document.getElementById("edit_company").value.trim() || "-";
+            const newType = document.getElementById("edit_productType").value.trim() || "-";
+            const newChannel = document.getElementById("edit_channel").value.trim() || "-";
+            const newCurr = document.getElementById("edit_currency").value.trim() || "-";
+
+            let updatedAttr = {};
+            dynamicColumns.forEach(col => {
+                let val = document.getElementById(`edit_attr_${col}`).value.trim();
+                updatedAttr[col] = sanitizeValue(val);
+            });
+
+            // Susun baris lengkap sesuai Master Schema
+            let masterSchema = [
+                "Product Name", "Company Name", "Par/Non Par", "Product Type", 
+                "Distribution Channel", "Currency", ...dynamicColumns
+            ];
+
+            let rowData = masterSchema.map(colName => {
+                if (colName === "Product Name") return p.name;
+                if (colName === "Company Name") return newCompany;
+                if (colName === "Par/Non Par") return p.par || "-";
+                if (colName === "Product Type") return newType;
+                if (colName === "Distribution Channel") return newChannel;
+                if (colName === "Currency") return newCurr;
+                return updatedAttr[colName] || "-";
+            });
+
+            try {
+                const payload = {
+                    action: "update",
+                    sheetName: p.category,
+                    productName: p.name,
+                    data: rowData
+                };
+
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+
+                closeDetailModal();
+                fetchAllSheetData();
+
+            } catch (err) {
+                console.error(err);
+                alert("Gagal meng-update data ke Google Sheets. Pastikan jaringan internet stabil.");
+                btnSave.disabled = false;
+                btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan`;
+            }
+        }
+
+        function closeDetailModal() { 
+            document.getElementById("detailModal").classList.add("hidden"); 
+            currentActiveProduct = null;
+        }
+
+        // --- UPLOAD EXCEL LOGIC (DENGAN CEK DUPLIKASI & PARSER BENEFIT) ---
+        function openUploadModal() {
+            document.getElementById("uploadModal").classList.remove("hidden");
+            document.getElementById("excelFileInput").value = "";
+            document.getElementById("uploadPreviewArea").classList.add("hidden");
+            document.getElementById("uploadPreviewArea").innerHTML = "";
+            document.getElementById("btnSubmitUpload").disabled = true;
+            parsedUploadRows = [];
+        }
+
+        function closeUploadModal() {
+            document.getElementById("uploadModal").classList.add("hidden");
+        }
+
+        function previewExcelFile() {
+            const fileInput = document.getElementById("excelFileInput");
+            const previewArea = document.getElementById("uploadPreviewArea");
+            const submitBtn = document.getElementById("btnSubmitUpload");
+
+            if (!fileInput.files || fileInput.files.length === 0) {
+                previewArea.classList.add("hidden");
+                submitBtn.disabled = true;
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    let allParsed = parseExcelToSheetsSchema(workbook);
+
+                    // --- FITUR CEK DUPLIKASI PRODUK ---
+                    let existingProductNames = products.map(p => p.name.toLowerCase().trim());
+                    parsedUploadRows = [];
+                    let duplicateCount = 0;
+
+                    allParsed.forEach(row => {
+                        let prodName = String(row[0]).toLowerCase().trim();
+                        if (existingProductNames.includes(prodName)) {
+                            duplicateCount++;
+                        } else {
+                            parsedUploadRows.push(row);
+                        }
+                    });
+
+                    if (allParsed.length === 0) {
+                        previewArea.innerHTML = `<p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation"></i> Tidak ada data produk yang terdeteksi.</p>`;
+                        submitBtn.disabled = true;
+                    } else if (parsedUploadRows.length === 0) {
+                        previewArea.innerHTML = `<p class="text-amber-600 font-semibold"><i class="fa-solid fa-triangle-exclamation"></i> Semua ${duplicateCount} produk di file ini sudah ada di database master.</p>`;
+                        submitBtn.disabled = true;
+                    } else {
+                        let sampleNames = parsedUploadRows.map(r => r[0]).slice(0, 3).join(", ");
+                        if (parsedUploadRows.length > 3) sampleNames += ", dll.";
+
+                        previewArea.innerHTML = `
+                            <p class="font-bold text-green-700"><i class="fa-solid fa-circle-check"></i> File Valid!</p>
+                            <p><strong>Siap Diunggah:</strong> ${parsedUploadRows.length} Produk Baru</p>
+                            ${duplicateCount > 0 ? `<p class="text-amber-600 font-medium"><i class="fa-solid fa-ban me-1"></i>${duplicateCount} Produk dilewati (sudah ada di database)</p>` : ''}
+                            <p class="text-gray-500 italic mt-1">Pratinjau: ${sampleNames}</p>
+                        `;
+                        submitBtn.disabled = false;
+                    }
+                    previewArea.classList.remove("hidden");
+
+                } catch (err) {
+                    console.error(err);
+                    previewArea.innerHTML = `<p class="text-red-500"><i class="fa-solid fa-circle-xmark"></i> Gagal membaca file Excel. Pastikan format file .xlsx / .xls valid.</p>`;
+                    previewArea.classList.remove("hidden");
+                    submitBtn.disabled = true;
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        // SMART DYNAMIC PARSER PERBAIKAN BENEFITS & N/A
+        function parseExcelToSheetsSchema(workbook) {
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+
+            if (!rawData || rawData.length === 0) return [];
+
+            let masterSchema = [
+                "Product Name", "Company Name", "Par/Non Par", "Product Type", 
+                "Distribution Channel", "Currency", ...dynamicColumns
+            ];
+
+            // Case A: Excel Flat / Horizontal
+            const headerRow = rawData[0].map(c => String(c).trim().toLowerCase());
+            if (headerRow.includes("product name") || headerRow.includes("company name")) {
+                let result = [];
+                for (let r = 1; r < rawData.length; r++) {
+                    let row = rawData[r];
+                    if (!row || row.every(cell => String(cell).trim() === "")) continue;
+
+                    let mappedRow = masterSchema.map(colName => {
+                        let idx = headerRow.findIndex(h => h === colName.toLowerCase());
+                        let val = (idx !== -1 && row[idx] !== undefined) ? String(row[idx]).trim() : "-";
+                        return sanitizeValue(val);
+                    });
+                    result.push(mappedRow);
+                }
+                return result;
+            }
+
+            // Case B: Excel Vertikal Custom (seperti example.xlsx)
+            let resultRows = [];
+            let colCount = Math.max(...rawData.map(r => r.length));
+
+            for (let c = 1; c < colCount; c++) {
+                let prodName = String(rawData[0][c] || "").replace(/\r\n|\r|\n/g, ' ').trim();
+                if (!prodName || prodName === "undefined" || prodName === "null") continue;
+
+                let company = "-";
+                let lowerName = prodName.toLowerCase();
+                if (lowerName.includes("manulife")) company = "Manulife";
+                else if (lowerName.includes("ava") || lowerName.includes("astra")) company = "Astra Life";
+                else if (lowerName.includes("aia")) company = "AIA";
+                else if (lowerName.includes("allianz")) company = "Allianz";
+                else if (lowerName.includes("pru")) company = "Prudential";
+
+                let attrMap = {};
+                for (let r = 0; r < rawData.length; r++) {
+                    let label = String(rawData[r][0] || "").trim();
+                    let lowerLabel = label.toLowerCase();
+                    let val = String(rawData[r][c] || "").trim();
+
+                    if (val && val !== "-" && val !== "null") {
+                        // PERBAIKAN LOGIKA: Jika label kosong ATAU bertuliskan "benefits/benefit"
+                        if (!label || lowerLabel === "benefits" || lowerLabel === "benefit" || lowerLabel.startsWith("benefit")) {
+                            let colonIdx = val.indexOf(":");
+                            if (colonIdx > 0 && colonIdx < 30) {
+                                let key = val.substring(0, colonIdx).trim();
+                                let cleanVal = val.substring(colonIdx + 1).trim();
+                                attrMap[key] = sanitizeValue(cleanVal);
+                            }
+                        } else {
+                            let cleanLabel = label.replace(/:$/, '').trim();
+                            attrMap[cleanLabel] = sanitizeValue(val);
+                        }
+                    }
+                }
+
+                let mappedRow = masterSchema.map(colName => {
+                    if (colName === "Product Name") return prodName;
+                    if (colName === "Company Name") return company;
+                    if (colName === "Par/Non Par") return sanitizeValue(attrMap["Par/Non Par"]);
+                    if (colName === "Product Type") return sanitizeValue(attrMap["Product Type"]);
+                    if (colName === "Distribution Channel") return sanitizeValue(attrMap["Distribution Channel"] || attrMap["Channel Distribution"]);
+                    if (colName === "Currency") return sanitizeValue(attrMap["Currency"]);
+
+                    let matchedKey = Object.keys(attrMap).find(k => k.toLowerCase() === colName.toLowerCase());
+                    return matchedKey ? sanitizeValue(attrMap[matchedKey]) : "-";
+                });
+
+                resultRows.push(mappedRow);
+            }
+
+            return resultRows;
+        }
+
+        async function processAndUploadExcel() {
+            if (parsedUploadRows.length === 0) return;
+
+            const submitBtn = document.getElementById("btnSubmitUpload");
+            const previewArea = document.getElementById("uploadPreviewArea");
+            const targetSheet = document.getElementById("uploadTargetSheet").value;
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Mengirim ke Google Sheets...`;
+
+            try {
+                const payload = {
+                    action: "append",
+                    sheetName: targetSheet,
+                    data: parsedUploadRows
+                };
+
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+
+                previewArea.innerHTML = `
+                    <p class="font-bold text-green-700 text-sm"><i class="fa-solid fa-circle-check"></i> Berhasil Diunggah!</p>
+                    <p class="text-xs text-gray-600">${parsedUploadRows.length} produk baru ditambahkan ke tab <strong>${targetSheet}</strong>.</p>
+                `;
+
+                setTimeout(() => {
+                    closeUploadModal();
+                    fetchAllSheetData();
+                }, 2000);
+
+            } catch (err) {
+                console.error(err);
+                previewArea.innerHTML = `<p class="text-red-500"><i class="fa-solid fa-circle-xmark"></i> Gagal terhubung ke Google Sheets API. Pastikan internet Anda lancar.</p>`;
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Coba Lagi`;
+            }
+        }
+    </script>
+</body>
+</html>

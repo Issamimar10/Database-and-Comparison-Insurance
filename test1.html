@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database & Komparasi Asuransi</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 font-sans pb-24">
+
+    <!-- Navbar Header -->
+    <header class="bg-blue-900 text-white p-4 shadow-md sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <i class="fa-solid me-2 fa-shield-halved"></i> Katalis Asuransi Syariah
+            </h1>
+            <span class="text-xs bg-blue-800 px-3 py-1 rounded-full text-blue-200" id="totalProductCount">Memuat data...</span>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-4 md:p-6">
+        <!-- Filter & Search Bar -->
+        <div class="bg-white p-4 rounded-xl shadow-sm mb-6 flex flex-col md:flex-row gap-3 items-center">
+            <div class="relative w-full md:w-1/3">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-gray-400"></i>
+                <input type="text" id="searchInput" oninput="filterData()" placeholder="Cari nama produk atau perusahaan..." 
+                       class="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+            </div>
+
+            <div class="flex flex-wrap gap-2 w-full md:w-2/3 justify-end">
+                <select id="companyFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
+                    <option value="">Semua Perusahaan</option>
+                </select>
+
+                <select id="channelFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
+                    <option value="">Semua Channel</option>
+                    <option value="Direct">Direct</option>
+                    <option value="Bancassurance">Bancassurance</option>
+                </select>
+
+                <select id="currencyFilter" onchange="filterData()" class="border text-sm rounded-lg px-3 py-2 bg-white text-gray-700">
+                    <option value="">Semua Mata Uang</option>
+                    <option value="IDR">IDR</option>
+                    <option value="USD">USD</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Tampilan Loading -->
+        <div id="loadingIndicator" class="text-center py-12 text-gray-500">
+            <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-3 text-blue-500"></i>
+            <p>Menghubungkan ke Google Sheets...</p>
+        </div>
+
+        <!-- AppSheet Deck-Style Grid -->
+        <div id="deckGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden">
+            <!-- Kartu produk dirender secara dinamis -->
+        </div>
+    </main>
+
+    <!-- Floating Comparison Bar -->
+    <div id="compareBar" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 transition-all transform translate-y-32 z-40">
+        <span class="text-sm font-medium"><span id="selectedCount" class="font-bold text-blue-400">0</span> produk dipilih</span>
+        <button onclick="openComparisonModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition">
+            <i class="fa-solid fa-columns me-1"></i> Bandingkan Side-by-Side
+        </button>
+        <button onclick="clearSelection()" class="text-gray-400 hover:text-white text-xs underline">Batal</button>
+    </div>
+
+    <!-- Modal Perbandingan Side-by-Side -->
+    <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 bg-gray-900 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-code-compare me-2 text-blue-400"></i>Perbandingan Produk Side-by-Side</h3>
+                <button onclick="closeComparisonModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <div class="p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer"></div>
+        </div>
+    </div>
+
+    <!-- Modal Detail Single Produk -->
+    <div id="detailModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 bg-blue-900 text-white flex justify-between items-center">
+                <h3 id="detailTitle" class="font-bold text-lg">Detail Produk</h3>
+                <button onclick="closeDetailModal()" class="text-gray-300 hover:text-white text-xl">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-3 text-sm" id="detailBody"></div>
+        </div>
+    </div>
+
+    <!-- SCRIPT LOGIKA UTAMA WEB -->
+    <script>
+        const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
+
+        let products = [];
+        let selectedProductIds = [];
+
+        // Penarikan data dengan parameter headers=1
+        document.addEventListener("DOMContentLoaded", () => {
+            const script = document.createElement('script');
+            script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=1&tqx=responseHandler:prosesDataSheets`;
+            document.body.appendChild(script);
+        });
+
+        window.prosesDataSheets = function(jsonData) {
+            try {
+                let cols = jsonData.table.cols.map(c => c ? (c.label || "").trim() : ""); 
+                let rows = jsonData.table.rows;
+
+                // Jika Google tidak membaca baris 1 sebagai nama kolom di `cols`, ambil dari baris data pertama
+                const hasValidLabels = cols.some(l => l && l !== "" && !/^[A-Z]+$/.test(l));
+                if (!hasValidLabels && rows.length > 0) {
+                    cols = rows[0].c.map(cell => (cell && cell.v !== null && cell.v !== undefined) ? String(cell.v).trim() : "");
+                    rows = rows.slice(1);
+                }
+
+                products = rows.map((row, index) => {
+                    if (!row || !row.c) return null;
+
+                    const getVal = (colName) => {
+                        const cIdx = cols.findIndex(c => c.toLowerCase() === colName.toLowerCase());
+                        if (cIdx !== -1 && row.c[cIdx] && row.c[cIdx].v !== null && row.c[cIdx].v !== undefined) {
+                            return row.c[cIdx].f ? row.c[cIdx].f : String(row.c[cIdx].v);
+                        }
+                        return "-";
+                    };
+
+                    const prodName = getVal("Product Name");
+                    const compName = getVal("Company Name");
+
+                    if (prodName === "-" && compName === "-") return null;
+
+                    return {
+                        id: index + 1,
+                        company: compName,
+                        name: prodName,
+                        channel: getVal("Distribution Channel"),
+                        currency: getVal("Currency"),
+                        par: getVal("Par/Non Par"),
+                        productType: getVal("Product Type"),
+                        
+                        // Rincian Manfaat
+                        deathBenefit: getVal("Death Benefit"),
+                        accidentalBenefit: getVal("Accidental Death Benefit"),
+                        terminalIllness: getVal("Terminal Illness Benefit"),
+                        saBonus: getVal("Sum Assured Bonus"),
+                        cashPayout: getVal("Cash Payout Bonus"),
+                        maturityBenefit: getVal("Maturity Benefit"),
+                        
+                        // Ketentuan Polis
+                        coveragePeriod: getVal("Coverage Period") !== "-" ? getVal("Coverage Period") : getVal("Coverage Term"),
+                        ppp: getVal("Premium Payment Period (PPP)") !== "-" ? getVal("Premium Payment Period (PPP)") : getVal("Premium Term"),
+                        entryAge: getVal("Entry Age"),
+                        minPremium: getVal("Min Premium"),
+                        minSumAssured: getVal("Min Sum Assured"),
+                        underwriting: getVal("Underwriting Method"),
+                        riders: getVal("Available Riders")
+                    };
+                }).filter(p => p !== null);
+
+                if (products.length === 0) {
+                    throw new Error("Data di Google Sheets tidak ditemukan.");
+                }
+
+                document.getElementById("loadingIndicator").classList.add("hidden");
+                document.getElementById("deckGrid").classList.remove("hidden");
+                
+                populateFilters();
+                renderDeck(products);
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById("loadingIndicator").innerHTML = `
+                    <p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> Gagal memuat data: ${err.message}</p>
+                `;
+            }
+        };
+
+        function populateFilters() {
+            const companySelect = document.getElementById("companyFilter");
+            const companies = [...new Set(products.map(p => p.company))].filter(c => c !== "-");
+            companies.forEach(comp => {
+                const opt = document.createElement("option");
+                opt.value = comp;
+                opt.textContent = comp;
+                companySelect.appendChild(opt);
+            });
+        }
+
+        function renderDeck(data) {
+            const grid = document.getElementById("deckGrid");
+            document.getElementById("totalProductCount").textContent = `${data.length} Produk`;
+            grid.innerHTML = "";
+
+            if (data.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-500">Tidak ada produk ditemukan sesuai filter</div>`;
+                return;
+            }
+
+            data.forEach(p => {
+                const isSelected = selectedProductIds.includes(p.id);
+                const card = document.createElement("div");
+                card.className = `bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'} hover:shadow-md transition p-5 flex flex-col justify-between relative cursor-pointer`;
+                
+                card.innerHTML = `
+                    <div>
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">${p.company}</span>
+                            <span class="text-xs text-gray-500">${p.currency}</span>
+                        </div>
+                        <h3 class="font-bold text-gray-800 text-base mb-1" onclick="openDetailModal(${p.id})">${p.name}</h3>
+                        <p class="text-xs text-gray-500 mb-3"><i class="fa-solid fa-diagram-project me-1"></i> ${p.channel} &bull; <span class="italic">${p.productType}</span></p>
+                        
+                        <div class="text-xs bg-gray-50 p-2.5 rounded-lg text-gray-600 mb-3 line-clamp-3">
+                            <strong class="text-gray-800 block">Death Benefit:</strong> ${p.deathBenefit}
+                        </div>
+                    </div>
+
+                    <div class="pt-3 border-t flex justify-between items-center text-xs">
+                        <button onclick="openDetailModal(${p.id})" class="text-blue-600 hover:underline font-medium">Lihat Detail</button>
+                        <button onclick="toggleSelectProduct(${p.id}, event)" class="px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 hover:bg-gray-50'}">
+                            <i class="fa-solid ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Dipilih' : 'Bandingkan'}
+                        </button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function filterData() {
+            const search = document.getElementById("searchInput").value.toLowerCase();
+            const comp = document.getElementById("companyFilter").value;
+            const channel = document.getElementById("channelFilter").value;
+            const curr = document.getElementById("currencyFilter").value;
+
+            const filtered = products.filter(p => {
+                return (p.name.toLowerCase().includes(search) || p.company.toLowerCase().includes(search)) &&
+                       (!comp || p.company === comp) &&
+                       (!channel || p.channel.includes(channel)) &&
+                       (!curr || p.currency.includes(curr));
+            });
+            renderDeck(filtered);
+        }
+
+        function toggleSelectProduct(id, e) {
+            e.stopPropagation();
+            if (selectedProductIds.includes(id)) { 
+                selectedProductIds = selectedProductIds.filter(pid => pid !== id); 
+            } else { 
+                selectedProductIds.push(id); 
+            }
+            updateCompareBar();
+            filterData();
+        }
+
+        function updateCompareBar() {
+            const bar = document.getElementById("compareBar");
+            document.getElementById("selectedCount").textContent = selectedProductIds.length;
+            if (selectedProductIds.length > 0) {
+                bar.classList.remove("translate-y-32");
+            } else {
+                bar.classList.add("translate-y-32");
+            }
+        }
+
+        function clearSelection() { 
+            selectedProductIds = []; 
+            updateCompareBar(); 
+            filterData(); 
+        }
+
+        function openComparisonModal() {
+            const container = document.getElementById("modalTableContainer");
+            const selectedProds = products.filter(p => selectedProductIds.includes(p.id));
+
+            container.innerHTML = `
+                <table class="w-full text-sm text-left border-collapse min-w-[600px]">
+                    <thead>
+                        <tr class="bg-gray-100 border-b">
+                            <th class="p-3 font-semibold text-gray-700 w-48 sticky left-0 bg-gray-100 z-10 shadow-sm">Atribut / Fitur</th>
+                            ${selectedProds.map(p => `
+                                <th class="p-3 font-bold text-blue-900 border-l min-w-[240px]">
+                                    <div class="text-xs text-blue-600 font-normal">${p.company}</div>${p.name}
+                                </th>
+                            `).join('')}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y">
+                        <tr><td class="p-3 font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm">Channel Distribusi</td>${selectedProds.map(p => `<td class="p-3 border-l">${p.channel}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm">Tipe Produk</td>${selectedProds.map(p => `<td class="p-3 border-l">${p.productType}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm">Masa Pembayaran (PPP)</td>${selectedProds.map(p => `<td class="p-3 border-l">${p.ppp}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm">Masa Pertanggungan</td>${selectedProds.map(p => `<td class="p-3 border-l">${p.coveragePeriod}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-medium text-gray-600 bg-gray-50 sticky left-0 shadow-sm">Usia Masuk</td>${selectedProds.map(p => `<td class="p-3 border-l text-xs">${p.entryAge}</td>`).join('')}</tr>
+                        
+                        <!-- Rincian Manfaat Spesifik -->
+                        <tr><td class="p-3 font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm border-t-2">Death Benefit</td>${selectedProds.map(p => `<td class="p-3 border-l border-t-2 text-xs bg-white">${p.deathBenefit}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm">Accidental Death Benefit</td>${selectedProds.map(p => `<td class="p-3 border-l text-xs bg-white">${p.accidentalBenefit}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm">Terminal Illness Benefit</td>${selectedProds.map(p => `<td class="p-3 border-l text-xs bg-white">${p.terminalIllness}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm">Sum Assured Bonus</td>${selectedProds.map(p => `<td class="p-3 border-l text-xs bg-white">${p.saBonus}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm">Maturity Benefit</td>${selectedProds.map(p => `<td class="p-3 border-l text-xs bg-white">${p.maturityBenefit}</td>`).join('')}</tr>
+                        <tr><td class="p-3 font-bold text-blue-800 bg-blue-50 sticky left-0 shadow-sm">Available Riders</td>${selectedProds.map(p => `<td class="p-3 border-l text-xs bg-white">${p.riders}</td>`).join('')}</tr>
+                    </tbody>
+                </table>
+            `;
+            document.getElementById("compareModal").classList.remove("hidden");
+        }
+
+        function closeComparisonModal() { 
+            document.getElementById("compareModal").classList.add("hidden"); 
+        }
+
+        function openDetailModal(id) {
+            const p = products.find(prod => prod.id === id);
+            if (!p) return;
+
+            document.getElementById("detailTitle").textContent = p.name;
+            document.getElementById("detailBody").innerHTML = `
+                <div class="border-b pb-2"><strong>Perusahaan:</strong> ${p.company}</div>
+                <div class="border-b pb-2"><strong>Channel:</strong> ${p.channel}</div>
+                <div class="border-b pb-2"><strong>Tipe Produk:</strong> ${p.productType}</div>
+                <div class="border-b pb-2"><strong>Masa Asuransi:</strong> ${p.coveragePeriod}</div>
+                <div class="border-b pb-2"><strong>Masa Bayar Premi:</strong> ${p.ppp}</div>
+                <div class="border-b pb-2"><strong>Usia Masuk:</strong> ${p.entryAge}</div>
+                <div class="border-b pb-2"><strong>Min Sum Assured:</strong> ${p.minSumAssured}</div>
+                
+                <div class="pt-3 font-bold text-blue-800">Manfaat Utama</div>
+                <div class="border-b pb-2"><strong>Death Benefit:</strong><br><span class="text-gray-600">${p.deathBenefit}</span></div>
+                <div class="border-b pb-2"><strong>Maturity Benefit:</strong><br><span class="text-gray-600">${p.maturityBenefit}</span></div>
+                <div class="pb-2"><strong>Available Riders:</strong><br><span class="text-gray-600">${p.riders}</span></div>
+            `;
+            document.getElementById("detailModal").classList.remove("hidden");
+        }
+
+        function closeDetailModal() { 
+            document.getElementById("detailModal").classList.add("hidden"); 
+        }
+    </script>
+</body>
+</html>
