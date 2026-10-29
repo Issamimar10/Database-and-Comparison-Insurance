@@ -33,3 +33,8 @@ $RECYCLE.BIN/
 !.vscode/extensions.json
 .idea/
 
+# Local backups and test files
+backups/
+test*.html
+
+
