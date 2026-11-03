@@ -1767,7 +1767,7 @@
                     // Tanggal Rilis: Terbaru -> Terlama
                     const dateA = parseDateValue(a.launchDate);
                     const dateB = parseDateValue(b.launchDate);
-                    if (dateA && dateB) return dateB.getTime() - dateA.getTime();
+                    if (dateA && dateB) return dateA.getTime() - dateB.getTime();
                     if (dateA && !dateB) return -1;
                     if (!dateA && dateB) return 1;
                     return String(a.name || "").localeCompare(String(b.name || ""));
@@ -1776,7 +1776,7 @@
                     // Tanggal Rilis: Terlama -> Terbaru
                     const dateA = parseDateValue(a.launchDate);
                     const dateB = parseDateValue(b.launchDate);
-                    if (dateA && dateB) return dateA.getTime() - dateB.getTime();
+                    if (dateA && dateB) return dateB.getTime() - dateA.getTime();
                     if (dateA && !dateB) return -1;
                     if (!dateA && dateB) return 1;
                     return String(a.name || "").localeCompare(String(b.name || ""));
