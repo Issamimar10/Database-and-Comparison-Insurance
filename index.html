@@ -1943,57 +1943,21 @@
             cfgScript.onerror = () => console.warn("Sheet Config tidak ditemukan.");
             document.body.appendChild(cfgScript);
 
-            // 2. Muat Documents Sheet (Indeks File Google Drive)
-            window.prosesDataDocuments = function (jsonData) {
-                try {
-                    if (jsonData && jsonData.table && jsonData.table.cols && jsonData.table.rows) {
-                        // VALIDASI KETAT: Pastikan ini benar-benar sheet 'Documents' asli dengan header yang tepat,
-                        // bukan fallback bawaan Google Sheets yang mengembalikan sheet pertama (Konven) jika tab belum ada.
-                        const colLabels = jsonData.table.cols.map(c => (c.label || "").trim().toLowerCase());
-                        const isRealDocSheet = colLabels.includes("file name") && (colLabels.includes("file id") || colLabels.includes("drive url"));
-                        if (!isRealDocSheet) {
-                            // Abaikan karena sheet Documents belum dibuat di spreadsheet
-                            return;
+            // 2. Muat Dokumen Langsung dari Google Drive via Apps Script (Tanpa Sheet 'Documents')
+            fetch(`${APPS_SCRIPT_URL}?action=get_all_documents&t=${Date.now()}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.status === "success" && Array.isArray(data.documents)) {
+                        productDocuments = data.documents;
+                        if (currentActiveProduct) {
+                            renderDetailBodyView(currentActiveProduct);
                         }
-
-                        jsonData.table.rows.forEach(r => {
-                            if (!r || !r.c) return;
-                            const getCell = idx => (r.c[idx] && r.c[idx].v !== null && r.c[idx].v !== undefined) ? String(r.c[idx].v).trim() : "";
-                            const prodName = getCell(0);
-                            const docType = getCell(1) || "Dokumen";
-                            const fileName = getCell(2);
-                            const fileId = getCell(3);
-                            const driveUrl = getCell(4);
-                            const downloadUrl = getCell(5);
-                            const fileSize = getCell(6);
-                            const uploadDate = getCell(7);
-
-                            // Validasi: Harus memiliki nama produk, nama file, dan ID file Google Drive yang sah
-                            if (prodName && fileName && fileId && fileId !== "-" && fileId.length > 5) {
-                                productDocuments.push({
-                                    productName: prodName,
-                                    docType: docType,
-                                    fileName: fileName,
-                                    fileId: fileId,
-                                    driveUrl: driveUrl || `https://drive.google.com/file/d/${fileId}/view`,
-                                    downloadUrl: downloadUrl || `https://drive.google.com/uc?export=download&id=${fileId}`,
-                                    fileSize: fileSize,
-                                    uploadDate: uploadDate
-                                });
-                            }
-                        });
-                        if (currentlyVisibleProducts.length > 0) {
+                        if (currentlyVisibleProducts && currentlyVisibleProducts.length > 0) {
                             renderDeck(currentlyVisibleProducts);
                         }
                     }
-                } catch (e) {
-                    console.warn("Sheet Documents belum ada data:", e);
-                }
-            };
-            const docScript = document.createElement('script');
-            docScript.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=Documents&headers=1&tqx=responseHandler:prosesDataDocuments&t=${Date.now()}`;
-            docScript.onerror = () => console.warn("Sheet Documents belum dapat diakses.");
-            document.body.appendChild(docScript);
+                })
+                .catch(err => console.warn("Gagal memuat dokumen langsung dari Google Drive:", err));
 
             // 3. Muat Data Tab Produk (Konven, Syariah, HS)
             SHEET_TABS.forEach((tabName, index) => {

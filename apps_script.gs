@@ -1,5 +1,90 @@
+// ====================================================
+// COMPARISON MAKER - GOOGLE APPS SCRIPT BACKEND
+// Versi: 2.1 (Penyimpanan Dokumen Langsung ke Google Drive Tanpa Sheet 'Documents')
+// ====================================================
+
+// Helper Global: Ambil atau Gunakan Folder Google Drive untuk Dokumen (Folder "IDCM Test")
+function getOrCreateRootDocFolder() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = ss.getSheetByName("Config");
+  let folderId = "";
+
+  if (configSheet) {
+    const cfgData = configSheet.getDataRange().getValues();
+    for (let i = 1; i < cfgData.length; i++) {
+      const key = String(cfgData[i][1] || "").trim().toLowerCase();
+      if (key === "drive folder id") {
+        folderId = String(cfgData[i][2] || "").trim();
+        break;
+      }
+    }
+  }
+
+  let rootFolder = null;
+  if (folderId) {
+    try {
+      rootFolder = DriveApp.getFolderById(folderId);
+    } catch (e) {
+      rootFolder = null;
+    }
+  }
+
+  if (!rootFolder) {
+    // 1. Cek apakah ada folder bernama "IDCM Test" yang sudah dibuat user
+    const userFolders = DriveApp.getFoldersByName("IDCM Test");
+    if (userFolders.hasNext()) {
+      rootFolder = userFolders.next();
+    } else {
+      // 2. Cek apakah ada folder "Comparison Maker Documents"
+      const fallbackFolders = DriveApp.getFoldersByName("Comparison Maker Documents");
+      if (fallbackFolders.hasNext()) {
+        rootFolder = fallbackFolders.next();
+      } else {
+        // 3. Buat folder baru
+        rootFolder = DriveApp.createFolder("IDCM Test");
+      }
+    }
+  }
+  return rootFolder;
+}
+
 function doGet(e) {
-  // Dukungan untuk mengambil base64 file Google Drive langsung tanpa kendala CORS
+  // 1. Ambil daftar seluruh dokumen langsung dari folder Google Drive (Tanpa Sheet 'Documents')
+  if (e && e.parameter && e.parameter.action === "get_all_documents") {
+    try {
+      const rootFolder = getOrCreateRootDocFolder();
+      const docs = [];
+      const subFolders = rootFolder.getFolders();
+      while (subFolders.hasNext()) {
+        const sub = subFolders.next();
+        const prodName = sub.getName();
+        const files = sub.getFiles();
+        while (files.hasNext()) {
+          const f = files.next();
+          if (f.isTrashed()) continue;
+          docs.push({
+            productName: prodName,
+            docType: f.getDescription() || "Dokumen",
+            fileName: f.getName(),
+            fileId: f.getId(),
+            driveUrl: f.getUrl(),
+            downloadUrl: "https://drive.google.com/uc?export=download&id=" + f.getId(),
+            fileSize: f.getSize(),
+            uploadDate: Utilities.formatDate(f.getDateCreated(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss")
+          });
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        documents: docs
+      })).setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  // 2. Dukungan untuk mengambil base64 file Google Drive langsung tanpa kendala CORS
   if (e && e.parameter && e.parameter.action === "get_file_base64" && e.parameter.fileId) {
     try {
       const file = DriveApp.getFileById(e.parameter.fileId);
@@ -68,190 +153,108 @@ function doPost(e) {
 
     const PROTECTED_COLS = getProtectedCols();
 
-    // Helper: Ambil atau Gunakan Folder Google Drive untuk Dokumen (Folder "IDCM Test")
-    function getOrCreateRootDocFolder() {
-      const configSheet = ss.getSheetByName("Config");
-      let folderId = "";
-
-      if (configSheet) {
-        const cfgData = configSheet.getDataRange().getValues();
-        for (let i = 1; i < cfgData.length; i++) {
-          const key = String(cfgData[i][1] || "").trim().toLowerCase();
-          if (key === "drive folder id") {
-            folderId = String(cfgData[i][2] || "").trim();
-            break;
-          }
-        }
+    // Helper: Sinkronisasi Header Kolom Sheet dengan Header Baru dari Web / Excel
+    function syncSheetHeaders(targetSheet, incomingHeaders) {
+      let sheetHeaders = [];
+      const lastCol = targetSheet.getLastColumn();
+      if (lastCol > 0) {
+        sheetHeaders = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || "").trim());
       }
 
-      let rootFolder = null;
-      if (folderId) {
-        try {
-          rootFolder = DriveApp.getFolderById(folderId);
-        } catch (e) {
-          rootFolder = null;
-        }
-      }
-
-      if (!rootFolder) {
-        // 1. Cek apakah ada folder bernama "IDCM Test" yang sudah dibuat user
-        const userFolders = DriveApp.getFoldersByName("IDCM Test");
-        if (userFolders.hasNext()) {
-          rootFolder = userFolders.next();
-        } else {
-          // 2. Cek apakah ada folder "Comparison Maker Documents"
-          const fallbackFolders = DriveApp.getFoldersByName("Comparison Maker Documents");
-          if (fallbackFolders.hasNext()) {
-            rootFolder = fallbackFolders.next();
-          } else {
-            // 3. Buat folder baru
-            rootFolder = DriveApp.createFolder("IDCM Test");
-          }
-        }
-
-        // Coba aktifkan sharing (jika diizinkan oleh akun Google, abaikan jika dibatasi kebijakan domain)
-        try {
-          rootFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        } catch (e) {}
-
-        // Catat otomatis ID folder ini ke sheet Config
-        if (configSheet) {
-          const cfgData = configSheet.getDataRange().getValues();
-          let written = false;
-          for (let i = 1; i < cfgData.length; i++) {
-            const key = String(cfgData[i][1] || "").trim().toLowerCase();
-            if (key === "drive folder id") {
-              configSheet.getRange(i + 1, 3).setValue(rootFolder.getId());
-              written = true;
-              break;
-            }
-          }
-          if (!written) {
-            configSheet.appendRow(["Setting", "Drive Folder ID", rootFolder.getId()]);
-          }
-        }
-      }
-
-      return rootFolder;
-    }
-
-    // Helper: Pastikan semua header dari web ada di Sheet
-    function syncSheetHeaders(targetSheet, webHeaders) {
-      let lastCol = targetSheet.getLastColumn();
-      let sheetHeaders = lastCol > 0
-        ? targetSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h).trim())
-        : [];
-
-      if (!webHeaders || !Array.isArray(webHeaders)) return sheetHeaders;
-
-      // Jika sheet masih kosong total -> tulis seluruh header dari web di baris 1
       if (sheetHeaders.length === 0 || sheetHeaders.every(h => h === "")) {
-        const cleanHeaders = webHeaders.map(h => String(h || "").trim()).filter(h => h !== "");
-        if (cleanHeaders.length > 0) {
-          const headerRange = targetSheet.getRange(1, 1, 1, cleanHeaders.length);
-          headerRange.setNumberFormat("@");
-          headerRange.setValues([cleanHeaders]);
-        }
-        return cleanHeaders;
+        targetSheet.getRange(1, 1, 1, incomingHeaders.length).setValues([incomingHeaders]);
+        return incomingHeaders;
       }
 
-      webHeaders.forEach(function(webHeader) {
-        const cleanWebHeader = String(webHeader || "").trim();
-        if (!cleanWebHeader) return;
+      const lowerSheetHeaders = sheetHeaders.map(h => h.toLowerCase());
+      const newColsToAdd = [];
 
-        const exists = sheetHeaders.some(sh => sh.toLowerCase() === cleanWebHeader.toLowerCase());
-        if (!exists) {
-          const lowerH = cleanWebHeader.toLowerCase();
-
-          if (lowerH === "launch date" || lowerH === "tanggal rilis") {
-            // Sisipkan Launch Date setelah Currency
-            const currIdx = sheetHeaders.findIndex(sh => sh.toLowerCase() === "currency");
-            if (currIdx !== -1) {
-              targetSheet.insertColumnAfter(currIdx + 1);
-              targetSheet.getRange(1, currIdx + 2).setValue("Launch Date");
-            } else {
-              const insertAfter = Math.min(6, sheetHeaders.length);
-              targetSheet.insertColumnAfter(insertAfter);
-              targetSheet.getRange(1, insertAfter + 1).setValue("Launch Date");
-            }
-          } else if (lowerH === "additional benefit") {
-            // Sisipkan "Additional Benefit" tepat sebelum "Entry Age"
-            const entryAgeIdx = sheetHeaders.findIndex(sh => sh.toLowerCase() === "entry age");
-            if (entryAgeIdx !== -1) {
-              targetSheet.insertColumnBefore(entryAgeIdx + 1);
-              targetSheet.getRange(1, entryAgeIdx + 1).setValue("Additional Benefit");
-            } else {
-              const insertAfter = Math.max(1, Math.min(12, sheetHeaders.length));
-              targetSheet.insertColumnAfter(insertAfter);
-              targetSheet.getRange(1, insertAfter + 1).setValue("Additional Benefit");
-            }
-          } else {
-            // Kolom baru lainnya disisipkan setelah kolom ke-11
-            const insertAfterCol = Math.max(1, Math.min(11, sheetHeaders.length));
-            targetSheet.insertColumnAfter(insertAfterCol);
-            targetSheet.getRange(1, insertAfterCol + 1).setValue(cleanWebHeader);
-          }
-
-          lastCol = targetSheet.getLastColumn();
-          sheetHeaders = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h).trim());
+      incomingHeaders.forEach(function(h) {
+        const cleanH = String(h || "").trim();
+        if (!cleanH) return;
+        if (!lowerSheetHeaders.includes(cleanH.toLowerCase())) {
+          newColsToAdd.push(cleanH);
+          lowerSheetHeaders.push(cleanH.toLowerCase());
         }
       });
+
+      if (newColsToAdd.length > 0) {
+        const startCol = sheetHeaders.length + 1;
+        targetSheet.getRange(1, startCol, 1, newColsToAdd.length).setValues([newColsToAdd]);
+        sheetHeaders = sheetHeaders.concat(newColsToAdd);
+      }
 
       return sheetHeaders;
     }
 
-    // Helper: Hapus kolom manfaat tambahan (di luar PROTECTED_COLS) yang kosong di seluruh baris
+    // Helper: Petakan data array berdasarkan urutan nama kolom pada sheet
+    function alignRowToSheetHeaders(incomingHeaders, incomingRow, sheetHeaders) {
+      const lowerIncoming = incomingHeaders.map(h => String(h || "").trim().toLowerCase());
+      return sheetHeaders.map(function(sHeader) {
+        const sLower = String(sHeader || "").trim().toLowerCase();
+        const idx = lowerIncoming.indexOf(sLower);
+        if (idx !== -1 && incomingRow[idx] !== undefined && incomingRow[idx] !== null) {
+          let cellStr = String(incomingRow[idx]).trim();
+          if (cellStr.length > MAX_CELL_CHARS) {
+            cellStr = cellStr.substring(0, MAX_CELL_CHARS - 15) + "...[TRUNCATED]";
+          }
+          return cellStr;
+        }
+        return "-";
+      });
+    }
+
+    // Helper: Tulis satu baris sebagai Plain Text murni (format '@')
+    function writeRowAsPlainText(targetSheet, rowNum, rowData, headers) {
+      if (!rowData || rowData.length === 0) return;
+      const range = targetSheet.getRange(rowNum, 1, 1, rowData.length);
+      const formats = [];
+      const formatRow = [];
+      for (let c = 0; c < rowData.length; c++) {
+        formatRow.push("@");
+      }
+      formats.push(formatRow);
+      range.setNumberFormats(formats);
+
+      const strRowData = rowData.map(function(val) {
+        if (val === undefined || val === null) return "-";
+        return String(val);
+      });
+      range.setValues([strRowData]);
+    }
+
+    // Helper: Pembersihan Kolom Manfaat Kosong
     function cleanupEmptyBenefitColumns(targetSheet) {
-      const updatedData = targetSheet.getDataRange().getValues();
-      if (updatedData.length <= 1) return;
+      try {
+        const lastCol = targetSheet.getLastColumn();
+        const lastRow = targetSheet.getLastRow();
+        if (lastCol <= 1 || lastRow <= 1) return;
 
-      const latestHeaders = updatedData[0].map(h => String(h).trim());
-      for (let colIdx = latestHeaders.length - 1; colIdx >= 0; colIdx--) {
-        const colNameLower = latestHeaders[colIdx].toLowerCase();
-        if (!colNameLower || PROTECTED_COLS.indexOf(colNameLower) !== -1) continue;
+        const headers = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+        const data = targetSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
-        let isAllEmpty = true;
-        for (let r = 1; r < updatedData.length; r++) {
-          const cellVal = String(updatedData[r][colIdx] || "").trim();
-          if (cellVal !== "" && cellVal !== "-" && cellVal.toLowerCase() !== "n/a") {
-            isAllEmpty = false;
-            break;
+        for (let c = lastCol - 1; c >= 0; c--) {
+          const hName = String(headers[c] || "").trim().toLowerCase();
+          if (!hName || PROTECTED_COLS.includes(hName)) {
+            continue;
+          }
+
+          let hasValue = false;
+          for (let r = 0; r < data.length; r++) {
+            const cellVal = String(data[r][c] || "").trim();
+            if (cellVal !== "" && cellVal !== "-") {
+              hasValue = true;
+              break;
+            }
+          }
+
+          if (!hasValue) {
+            targetSheet.deleteColumn(c + 1);
           }
         }
-
-        if (isAllEmpty) {
-          targetSheet.deleteColumn(colIdx + 1);
-        }
+      } catch (err) {
+        console.error("Gagal membersihkan kolom kosong:", err);
       }
-    }
-
-    // Helper: Tulis 1 baris sebagai TEKS MURNI (@)
-    function writeRowAsPlainText(targetSheet, rowIndex, rowValues, headers) {
-      const cleanValues = rowValues.map(function(v) {
-        return (v === null || v === undefined) ? "-" : v;
-      });
-
-      cleanValues.forEach(function(v, i) {
-        if (String(v).length > MAX_CELL_CHARS) {
-          throw new Error("Kolom '" + (headers[i] || ("#" + (i + 1))) + "' melebihi " + MAX_CELL_CHARS + " karakter");
-        }
-      });
-
-      const range = targetSheet.getRange(rowIndex, 1, 1, cleanValues.length);
-      range.setNumberFormat("@");
-      range.setValues([cleanValues]);
-    }
-
-    // Helper: Susun baris sesuai urutan header di sheet
-    function alignRowToSheetHeaders(webHeaders, rowData, sheetHeaders) {
-      const valueMap = {};
-      webHeaders.forEach(function(h, idx) {
-        valueMap[String(h).trim().toLowerCase()] = rowData[idx];
-      });
-      return sheetHeaders.map(function(sh) {
-        const key = sh.toLowerCase();
-        return (valueMap[key] !== undefined) ? valueMap[key] : "-";
-      });
     }
 
     function jsonResponse(obj) {
@@ -260,13 +263,13 @@ function doPost(e) {
     }
 
     // ====================================================
-    // 1. ACTION: UPLOAD_DOCUMENT (Simpan ke Google Drive & Catat di Sheet 'Documents')
+    // 1. ACTION: UPLOAD_DOCUMENT (Simpan ke Google Drive langsung tanpa Sheet 'Documents')
     // ====================================================
     if (payload.action === "upload_document") {
       const rootFolder = getOrCreateRootDocFolder();
       const cleanProdName = String(payload.productName || "General").trim();
 
-      // Buat atau gunakan subfolder per produk
+      // Buat atau gunakan subfolder per produk di Google Drive
       const prodFolders = rootFolder.getFoldersByName(cleanProdName);
       const prodFolder = prodFolders.hasNext() ? prodFolders.next() : rootFolder.createFolder(cleanProdName);
       try {
@@ -278,6 +281,12 @@ function doPost(e) {
       const cleanFileName = String(payload.fileName || "dokumen").trim();
       const blob = Utilities.newBlob(decodedBytes, payload.mimeType || "application/octet-stream", cleanFileName);
       const file = prodFolder.createFile(blob);
+
+      // Simpan tipe dokumen ke metadata description file di Drive
+      if (payload.docType) {
+        file.setDescription(String(payload.docType));
+      }
+
       try {
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       } catch (e) {}
@@ -286,31 +295,12 @@ function doPost(e) {
       const viewUrl = file.getUrl();
       const downloadUrl = "https://drive.google.com/uc?export=download&id=" + fileId;
       const fileSize = file.getSize();
-      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
 
-      // Catat ke sheet Documents
-      let docSheet = ss.getSheetByName("Documents");
-      if (!docSheet) {
-        docSheet = ss.insertSheet("Documents");
-        const docHeaders = ["Product Name", "Doc Type", "File Name", "File ID", "Drive URL", "Download URL", "File Size", "Upload Date"];
-        const hRange = docSheet.getRange(1, 1, 1, docHeaders.length);
-        hRange.setNumberFormat("@");
-        hRange.setValues([docHeaders]);
+      // Hapus tab sheet 'Documents' jika pernah ada di Master Spreadsheet
+      const oldDocSheet = ss.getSheetByName("Documents");
+      if (oldDocSheet) {
+        try { ss.deleteSheet(oldDocSheet); } catch (e) {}
       }
-
-      const docRow = [
-        cleanProdName,
-        payload.docType || "Dokumen",
-        cleanFileName,
-        fileId,
-        viewUrl,
-        downloadUrl,
-        String(fileSize),
-        nowStr
-      ];
-      writeRowAsPlainText(docSheet, docSheet.getLastRow() + 1, docRow, [
-        "Product Name", "Doc Type", "File Name", "File ID", "Drive URL", "Download URL", "File Size", "Upload Date"
-      ]);
 
       return jsonResponse({
         status: "success",
@@ -326,7 +316,7 @@ function doPost(e) {
     }
 
     // ====================================================
-    // 2. ACTION: DELETE_DOCUMENT (Hapus dari Drive & Baris di Sheet 'Documents')
+    // 2. ACTION: DELETE_DOCUMENT (Hapus langsung dari Google Drive)
     // ====================================================
     if (payload.action === "delete_document") {
       if (payload.fileId) {
@@ -338,15 +328,10 @@ function doPost(e) {
         }
       }
 
-      const docSheet = ss.getSheetByName("Documents");
-      if (docSheet) {
-        const data = docSheet.getDataRange().getValues();
-        for (let r = data.length - 1; r >= 1; r--) {
-          const rowFileId = String(data[r][3] || "").trim();
-          if (rowFileId === String(payload.fileId).trim()) {
-            docSheet.deleteRow(r + 1);
-          }
-        }
+      // Hapus tab sheet 'Documents' jika masih ada di Master Spreadsheet
+      const oldDocSheet = ss.getSheetByName("Documents");
+      if (oldDocSheet) {
+        try { ss.deleteSheet(oldDocSheet); } catch (e) {}
       }
 
       return jsonResponse({ status: "success", action: "delete_document" });
@@ -396,13 +381,6 @@ function doPost(e) {
     }
 
     let sheet = ss.getSheetByName(payload.sheetName);
-    if (!sheet && payload.sheetName === "Documents") {
-      sheet = ss.insertSheet("Documents");
-      const docHeaders = ["Product Name", "Doc Type", "File Name", "File ID", "Drive URL", "Download URL", "File Size", "Upload Date"];
-      const hRange = sheet.getRange(1, 1, 1, docHeaders.length);
-      hRange.setNumberFormat("@");
-      hRange.setValues([docHeaders]);
-    }
     if (!sheet) {
       return jsonResponse({ status: "error", message: "Sheet tidak ditemukan: " + payload.sheetName });
     }
@@ -471,8 +449,21 @@ function doPost(e) {
 // FUNGSI KHUSUS UNTUK MEMICU POP-UP IZIN TULIS (WRITE) GOOGLE DRIVE
 // ====================================================
 function authorizeDrive() {
-  // Menulis file uji coba sementara agar Google memicu pop-up izin penuh (Create, Edit, Delete)
   const tempFile = DriveApp.createFile("test_permission.txt", "OK");
   tempFile.setTrashed(true);
   console.log("Izin Google Drive Full Access (Tulis & Buat Folder) Berhasil Aktif!");
+}
+
+// ====================================================
+// FUNGSI UNTUK MENGHAPUS SHEET 'Documents' JIKA MASIH ADA DI MASTER SPREADSHEET
+// ====================================================
+function deleteDocumentsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const docSheet = ss.getSheetByName("Documents");
+  if (docSheet) {
+    ss.deleteSheet(docSheet);
+    console.log("Sheet 'Documents' berhasil dihapus dari Master Spreadsheet!");
+  } else {
+    console.log("Sheet 'Documents' memang sudah tidak ada.");
+  }
 }
