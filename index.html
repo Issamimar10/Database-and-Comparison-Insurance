@@ -4,7 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Insurance Database and Comparison Maker</title>
+    <title>Life Insurance Database and Comparison Maker</title>
+    <!-- Dynamic SVG Favicon (Sun Logo) -->
+    <link rel="icon" id="appFavicon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='14 14 72 72' fill='%23fef08a'%3E%3Ccircle cx='50' cy='50' r='17.5'/%3E%3Cline x1='77.3' y1='50' x2='80.7' y2='50' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='69.3' y1='69.3' x2='71.7' y2='71.7' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='50' y1='77.3' x2='50' y2='80.7' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='30.7' y1='69.3' x2='28.3' y2='71.7' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='22.7' y1='50' x2='19.3' y2='50' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='30.7' y1='30.7' x2='28.3' y2='28.3' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='50' y1='22.7' x2='50' y2='19.3' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='69.3' y1='30.7' x2='71.7' y2='28.3' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3C/svg%3E">
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -564,8 +566,21 @@
     <header id="mainHeader"
         class="bg-blue-900 dark:bg-slate-900 dark:border-b dark:border-slate-800 text-white p-3.5 sm:p-4 shadow-md sticky top-0 z-40 transition-colors duration-200">
         <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-3">
-            <h1 class="text-xl font-bold flex items-center gap-2">
-                <i class="fa-solid me-1 fa-shield-halved"></i> Insurance Database and Comparison Maker
+            <h1 class="text-xl font-bold flex items-center gap-2.5">
+                <svg id="appLogo" viewBox="14 14 72 72" class="w-7 h-7 sm:w-8 sm:h-8 inline-block shrink-0 transition-colors duration-200 text-[#fef08a] dark:text-white" fill="currentColor" aria-label="Logo">
+                    <!-- Lingkaran Inti Matahari -->
+                    <circle cx="50" cy="50" r="17.5" />
+                    <!-- 8 Sinar Kapsul (Pill Rays) Sesuai Gambar -->
+                    <line x1="77.3" y1="50" x2="80.7" y2="50" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="69.3" y1="69.3" x2="71.7" y2="71.7" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="50" y1="77.3" x2="50" y2="80.7" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="30.7" y1="69.3" x2="28.3" y2="71.7" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="22.7" y1="50" x2="19.3" y2="50" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="30.7" y1="30.7" x2="28.3" y2="28.3" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="50" y1="22.7" x2="50" y2="19.3" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                    <line x1="69.3" y1="30.7" x2="71.7" y2="28.3" stroke="currentColor" stroke-width="6.7" stroke-linecap="round" />
+                </svg>
+                <span>Life Insurance Database and Comparison Maker</span>
                 <!-- Link Buka Master Google Sheets -->
                 <a href="https://docs.google.com/spreadsheets/d/1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI/edit"
                     target="_blank" title="Buka Master Database" class="ml-2 text-blue-300 hover:text-white transition">
@@ -1180,14 +1195,29 @@
             const isDark = document.documentElement.classList.contains('dark');
             const themeIcon = document.getElementById('themeIcon');
             const themeBtn = document.getElementById('themeToggleBtn');
-            if (!themeIcon) return;
+            const appLogo = document.getElementById('appLogo');
+            const appFavicon = document.getElementById('appFavicon');
 
             if (isDark) {
-                themeIcon.className = "fa-solid fa-sun text-sm text-amber-400";
+                if (themeIcon) themeIcon.className = "fa-solid fa-sun text-sm text-yellow-100";
                 if (themeBtn) themeBtn.title = "Mode Terang (Ganti ke Light Mode)";
+                if (appLogo) {
+                    appLogo.classList.remove('text-[#fef08a]');
+                    appLogo.classList.add('text-white');
+                }
+                if (appFavicon) {
+                    appFavicon.href = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='14 14 72 72' fill='%23ffffff'%3E%3Ccircle cx='50' cy='50' r='17.5'/%3E%3Cline x1='77.3' y1='50' x2='80.7' y2='50' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='69.3' y1='69.3' x2='71.7' y2='71.7' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='50' y1='77.3' x2='50' y2='80.7' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='30.7' y1='69.3' x2='28.3' y2='71.7' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='22.7' y1='50' x2='19.3' y2='50' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='30.7' y1='30.7' x2='28.3' y2='28.3' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='50' y1='22.7' x2='50' y2='19.3' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='69.3' y1='30.7' x2='71.7' y2='28.3' stroke='%23ffffff' stroke-width='6.7' stroke-linecap='round'/%3E%3C/svg%3E";
+                }
             } else {
-                themeIcon.className = "fa-solid fa-moon text-sm text-blue-200";
+                if (themeIcon) themeIcon.className = "fa-solid fa-moon text-sm text-blue-200";
                 if (themeBtn) themeBtn.title = "Mode Gelap (Ganti ke Dark Mode)";
+                if (appLogo) {
+                    appLogo.classList.remove('text-white');
+                    appLogo.classList.add('text-[#fef08a]');
+                }
+                if (appFavicon) {
+                    appFavicon.href = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='14 14 72 72' fill='%23fef08a'%3E%3Ccircle cx='50' cy='50' r='17.5'/%3E%3Cline x1='77.3' y1='50' x2='80.7' y2='50' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='69.3' y1='69.3' x2='71.7' y2='71.7' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='50' y1='77.3' x2='50' y2='80.7' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='30.7' y1='69.3' x2='28.3' y2='71.7' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='22.7' y1='50' x2='19.3' y2='50' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='30.7' y1='30.7' x2='28.3' y2='28.3' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='50' y1='22.7' x2='50' y2='19.3' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3Cline x1='69.3' y1='30.7' x2='71.7' y2='28.3' stroke='%23fef08a' stroke-width='6.7' stroke-linecap='round'/%3E%3C/svg%3E";
+                }
             }
         }
 
