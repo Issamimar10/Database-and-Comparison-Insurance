@@ -58,10 +58,12 @@ function doGet(e) {
       while (subFolders.hasNext()) {
         const sub = subFolders.next();
         const prodName = sub.getName();
+        if (prodName === "__TABLE_IMAGES__") continue;
         const files = sub.getFiles();
         while (files.hasNext()) {
           const f = files.next();
           if (f.isTrashed()) continue;
+          if (f.getDescription() === "__TABLE_IMAGE__") continue;
           docs.push({
             productName: prodName,
             docType: f.getDescription() || "Dokumen",
@@ -85,14 +87,32 @@ function doGet(e) {
   }
 
   // 2. Dukungan untuk mengambil base64 file Google Drive langsung tanpa kendala CORS
+  // Mendukung konversi otomatis file Office (.docx / .xlsx) ke PDF untuk pratinjau instan di web
   if (e && e.parameter && e.parameter.action === "get_file_base64" && e.parameter.fileId) {
     try {
       const file = DriveApp.getFileById(e.parameter.fileId);
-      const b64 = Utilities.base64Encode(file.getBlob().getBytes());
+      const asPdf = e.parameter.asPdf === "true" || e.parameter.asPdf === true;
+      let blob;
+      let mimeType;
+      
+      if (asPdf) {
+        try {
+          blob = file.getAs("application/pdf");
+          mimeType = "application/pdf";
+        } catch (convErr) {
+          blob = file.getBlob();
+          mimeType = file.getMimeType();
+        }
+      } else {
+        blob = file.getBlob();
+        mimeType = file.getMimeType();
+      }
+
+      const b64 = Utilities.base64Encode(blob.getBytes());
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
         fileName: file.getName(),
-        mimeType: file.getMimeType(),
+        mimeType: mimeType,
         base64: b64
       })).setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
@@ -120,7 +140,8 @@ function doPost(e) {
     const MAX_CELL_CHARS = 50000;
 
     // Helper: Ambil daftar PROTECTED_COLS dari sheet Config secara dinamis
-    function getProtectedCols() {
+    function getProtectedCols(sheetName) {
+      const isSyariah = String(sheetName || "").trim().toLowerCase() === "syariah";
       const defaultCols = [
         "product name", "company name", "launch date", "tanggal rilis", "par/non par", "product type",
         "distribution channel", "currency",
@@ -128,9 +149,8 @@ function doPost(e) {
         "sum assured bonus", "cash payout bonus", "maturity benefit",
         "additional benefit",
         "entry age", "coverage period", "premium payment period (ppp)",
-        "min premium", "min sum assured", "underwriting method", "available riders",
-        "aqd", "akad", "alokasi kontribusi", "surplus underwriting"
-      ];
+        "min premium", "min sum assured", "underwriting method", "available riders"
+      ].concat(isSyariah ? ["aqd", "akad", "alokasi kontribusi", "surplus underwriting"] : []);
 
       try {
         const configSheet = ss.getSheetByName("Config");
@@ -142,6 +162,9 @@ function doPost(e) {
           const type = String(data[i][0] || "").trim().toLowerCase();
           const val = String(data[i][1] || "").trim().toLowerCase();
           if (type === "non-benefit" && val) {
+            if (!isSyariah && ["aqd", "akad", "alokasi kontribusi", "surplus underwriting"].includes(val)) {
+              continue;
+            }
             customCols.push(val);
           }
         }
@@ -150,8 +173,6 @@ function doPost(e) {
         return defaultCols;
       }
     }
-
-    const PROTECTED_COLS = getProtectedCols();
 
     // Helper: Sinkronisasi Header Kolom Sheet dengan Header Baru dari Web / Excel
     function syncSheetHeaders(targetSheet, incomingHeaders) {
@@ -226,16 +247,18 @@ function doPost(e) {
     // Helper: Pembersihan Kolom Manfaat Kosong
     function cleanupEmptyBenefitColumns(targetSheet) {
       try {
+        if (String(targetSheet.getName() || "").trim().toLowerCase() === "config") return;
         const lastCol = targetSheet.getLastColumn();
         const lastRow = targetSheet.getLastRow();
         if (lastCol <= 1 || lastRow <= 1) return;
 
+        const protectedCols = getProtectedCols(targetSheet.getName());
         const headers = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0];
         const data = targetSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
         for (let c = lastCol - 1; c >= 0; c--) {
           const hName = String(headers[c] || "").trim().toLowerCase();
-          if (!hName || PROTECTED_COLS.includes(hName)) {
+          if (!hName || protectedCols.includes(hName)) {
             continue;
           }
 
@@ -338,15 +361,32 @@ function doPost(e) {
     }
 
     // ====================================================
-    // 3. ACTION: GET_FILE_BASE64 (Untuk Ekspor ZIP Tanpa Kendala CORS)
+    // 3. ACTION: GET_FILE_BASE64 (Untuk Ekspor ZIP & Preview Inline dengan Opsi Konversi PDF)
     // ====================================================
     if (payload.action === "get_file_base64" && payload.fileId) {
       const file = DriveApp.getFileById(payload.fileId);
-      const b64 = Utilities.base64Encode(file.getBlob().getBytes());
+      const asPdf = payload.asPdf === true || payload.asPdf === "true";
+      let blob;
+      let mimeType;
+
+      if (asPdf) {
+        try {
+          blob = file.getAs("application/pdf");
+          mimeType = "application/pdf";
+        } catch (convErr) {
+          blob = file.getBlob();
+          mimeType = file.getMimeType();
+        }
+      } else {
+        blob = file.getBlob();
+        mimeType = file.getMimeType();
+      }
+
+      const b64 = Utilities.base64Encode(blob.getBytes());
       return jsonResponse({
         status: "success",
         fileName: file.getName(),
-        mimeType: file.getMimeType(),
+        mimeType: mimeType,
         base64: b64
       });
     }
@@ -381,6 +421,9 @@ function doPost(e) {
     }
 
     let sheet = ss.getSheetByName(payload.sheetName);
+    if (!sheet && payload.sheetName) {
+      sheet = ss.insertSheet(String(payload.sheetName).trim());
+    }
     if (!sheet) {
       return jsonResponse({ status: "error", message: "Sheet tidak ditemukan: " + payload.sheetName });
     }
@@ -401,6 +444,8 @@ function doPost(e) {
           writeRowAsPlainText(sheet, sheet.getLastRow() + 1, row, payload.data[0] || []);
         });
       }
+
+      cleanupEmptyBenefitColumns(sheet);
 
       return jsonResponse({ status: "success", action: "append" });
     }
