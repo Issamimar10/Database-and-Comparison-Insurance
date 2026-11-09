@@ -338,17 +338,71 @@ function doPost(e) {
       });
     }
 
+    // Helper: Cek apakah folder masih memiliki file atau subfolder aktif (tidak di-trash)
+    function isFolderCompletelyEmpty(folder) {
+      if (!folder) return false;
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        if (!f.isTrashed()) return false;
+      }
+      const subFolders = folder.getFolders();
+      while (subFolders.hasNext()) {
+        const sf = subFolders.next();
+        if (!sf.isTrashed()) return false;
+      }
+      return true;
+    }
+
     // ====================================================
-    // 2. ACTION: DELETE_DOCUMENT (Hapus langsung dari Google Drive)
+    // 2. ACTION: DELETE_DOCUMENT (Hapus langsung dari Google Drive + Hapus Folder Produk jika Kosong)
     // ====================================================
     if (payload.action === "delete_document") {
+      const rootFolder = getOrCreateRootDocFolder();
+      const rootFolderId = rootFolder ? rootFolder.getId() : "";
+      const parentFoldersToCheck = [];
+
       if (payload.fileId) {
         try {
           const file = DriveApp.getFileById(payload.fileId);
+          const parents = file.getParents();
+          while (parents.hasNext()) {
+            parentFoldersToCheck.push(parents.next());
+          }
           file.setTrashed(true);
         } catch (e) {
           console.error("Gagal trash file di Drive:", e);
         }
+      }
+
+      // Jika seluruh dokumen di dalam folder produk telah terhapus (kosong), hapus juga foldernya
+      parentFoldersToCheck.forEach(function(parentFolder) {
+        try {
+          if (
+            parentFolder &&
+            parentFolder.getId() !== rootFolderId &&
+            parentFolder.getName() !== "__TABLE_IMAGES__" &&
+            isFolderCompletelyEmpty(parentFolder)
+          ) {
+            parentFolder.setTrashed(true);
+          }
+        } catch (e) {
+          console.error("Gagal mengecek/menghapus folder kosong:", e);
+        }
+      });
+
+      // Fallback: jika productName dikirim dan foldernya kosong, hapus foldernya
+      if (payload.productName && rootFolder) {
+        try {
+          const targetProd = String(payload.productName).trim().toLowerCase();
+          const subFolders = rootFolder.getFolders();
+          while (subFolders.hasNext()) {
+            const sf = subFolders.next();
+            if (!sf.isTrashed() && sf.getName().trim().toLowerCase() === targetProd && isFolderCompletelyEmpty(sf)) {
+              sf.setTrashed(true);
+            }
+          }
+        } catch (e) {}
       }
 
       // Hapus tab sheet 'Documents' jika masih ada di Master Spreadsheet
@@ -392,26 +446,91 @@ function doPost(e) {
     }
 
     // ====================================================
-    // 4. ACTION: DELETE (Hapus 1 atau Banyak Produk)
+    // 4. ACTION: DELETE (Hapus 1 atau Banyak Produk + Opsi Hapus Gambar Tabel & Folder Dokumen Drive)
     // ====================================================
     if (payload.action === "delete" && Array.isArray(payload.items)) {
       const affectedSheets = {};
+      const deleteTableImages = payload.deleteTableImages === true || payload.deleteTableImages === "true";
+      const deleteProductDocs = payload.deleteProductDocs === true || payload.deleteProductDocs === "true";
+      const tableImageIdsToDelete = {};
+
+      if (deleteTableImages && Array.isArray(payload.tableImageFileIds)) {
+        payload.tableImageFileIds.forEach(function(fid) {
+          const cleanId = String(fid || "").trim();
+          if (cleanId) tableImageIdsToDelete[cleanId] = true;
+        });
+      }
+
+      const deletedProductNamesLower = {};
 
       payload.items.forEach(function(item) {
+        const targetName = String(item.productName || "").trim().toLowerCase();
+        if (targetName) deletedProductNamesLower[targetName] = true;
+
         const sheet = ss.getSheetByName(item.sheetName);
         if (!sheet) return;
 
         const dataRange = sheet.getDataRange().getValues();
-        const targetName = String(item.productName || "").trim().toLowerCase();
 
         for (let r = dataRange.length - 1; r >= 1; r--) {
           const rowProdName = String(dataRange[r][0] || "").trim().toLowerCase();
           if (rowProdName === targetName) {
+            // Jika opsi hapus gambar tabel aktif, ekstrak juga seluruh token [IMG_ID:...] dari baris yang dihapus
+            if (deleteTableImages) {
+              for (let c = 1; c < dataRange[r].length; c++) {
+                const cellStr = String(dataRange[r][c] || "");
+                const regex = /\[IMG_ID:([a-zA-Z0-9_-]+)\]|\[IMG:drive:([a-zA-Z0-9_-]+)\]/gi;
+                let m;
+                while ((m = regex.exec(cellStr)) !== null) {
+                  const foundId = m[1] || m[2];
+                  if (foundId) tableImageIdsToDelete[foundId] = true;
+                }
+              }
+            }
             sheet.deleteRow(r + 1);
             affectedSheets[item.sheetName] = sheet;
           }
         }
       });
+
+      // 1. Hapus file Gambar Tabel di Google Drive jika dicentang
+      if (deleteTableImages) {
+        Object.keys(tableImageIdsToDelete).forEach(function(imgFileId) {
+          try {
+            DriveApp.getFileById(imgFileId).setTrashed(true);
+          } catch (e) {
+            console.error("Gagal menghapus gambar tabel di Drive:", imgFileId, e);
+          }
+        });
+      }
+
+      // 2. Hapus seluruh Dokumen & Folder Produk di Google Drive jika dicentang
+      if (deleteProductDocs && Object.keys(deletedProductNamesLower).length > 0) {
+        try {
+          const rootFolder = getOrCreateRootDocFolder();
+          if (rootFolder) {
+            const subFolders = rootFolder.getFolders();
+            while (subFolders.hasNext()) {
+              const sub = subFolders.next();
+              if (sub.isTrashed()) continue;
+              const folderNameLower = String(sub.getName() || "").trim().toLowerCase();
+              if (folderNameLower === "__table_images__") continue;
+
+              if (deletedProductNamesLower[folderNameLower]) {
+                const files = sub.getFiles();
+                while (files.hasNext()) {
+                  try {
+                    files.next().setTrashed(true);
+                  } catch (fErr) {}
+                }
+                sub.setTrashed(true);
+              }
+            }
+          }
+        } catch (docErr) {
+          console.error("Gagal menghapus dokumen/folder produk di Drive:", docErr);
+        }
+      }
 
       Object.keys(affectedSheets).forEach(function(sName) {
         cleanupEmptyBenefitColumns(affectedSheets[sName]);
