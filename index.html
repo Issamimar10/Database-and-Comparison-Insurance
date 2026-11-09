@@ -468,13 +468,24 @@
         }
 
         async function deleteSingleProductDoc(fileId, productName) {
-            if (!confirm(`Hapus dokumen ini dari Google Drive?`)) return;
+            const currentDocs = getDocumentsForProduct(productName);
+            const isLastDoc = currentDocs.length === 1 && currentDocs[0].fileId === fileId;
+            const confirmMsg = isLastDoc
+                ? `Hapus dokumen terakhir ini dari Google Drive?\n\nKarena seluruh dokumen untuk produk "${productName}" telah habis, folder produk tersebut di Google Drive juga akan ikut dihapus secara otomatis.`
+                : `Hapus dokumen ini dari Google Drive?`;
+
+            if (!confirm(confirmMsg)) return;
 
             try {
-                const resp = await fetch(APPS_SCRIPT_URL, {
+                await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "delete_document", fileId: fileId })
+                    body: JSON.stringify({
+                        action: "delete_document",
+                        fileId: fileId,
+                        productName: productName,
+                        deleteEmptyParentFolder: true
+                    })
                 });
 
                 productDocuments = productDocuments.filter(d => d.fileId !== fileId);
@@ -1058,7 +1069,7 @@
     <!-- Modal Konfirmasi Hapus Produk -->
     <div id="deleteConfirmModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
             <div class="p-4 bg-red-600 text-white flex justify-between items-center">
                 <h3 class="font-bold text-base flex items-center gap-2">
                     <i class="fa-solid fa-trash-can"></i> Konfirmasi Hapus Produk
@@ -1066,11 +1077,53 @@
                 <button onclick="closeDeleteConfirmModal()"
                     class="text-red-100 hover:text-white text-xl">&times;</button>
             </div>
-            <div class="p-6 space-y-3 text-xs text-gray-700 dark:text-gray-200">
+            <div class="p-6 space-y-3.5 text-xs text-gray-700 dark:text-gray-200">
                 <p id="deleteConfirmSummary" class="text-sm font-medium"></p>
                 <div id="deleteConfirmList"
-                    class="max-h-44 overflow-y-auto bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-800/60 rounded-xl p-3 space-y-1.5">
+                    class="max-h-40 overflow-y-auto bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-800/60 rounded-xl p-3 space-y-1.5">
                 </div>
+
+                <!-- Opsi Pembersihan File Terkait di Google Drive (Dibagi 2 Checklist) -->
+                <div class="space-y-2 pt-1">
+                    <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                        Opsi Penghapusan Data Terkait:
+                    </div>
+
+                    <!-- Opsi 1: Hapus Gambar Tabel (Benefit, Alokasi Kontribusi, Spesifikasi, dll.) -->
+                    <label id="lblDeleteTableImages"
+                        class="flex items-start gap-2.5 p-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-700/40 hover:border-red-300 dark:hover:border-red-700 transition cursor-pointer select-none">
+                        <input type="checkbox" id="chkDeleteTableImages" checked
+                            class="mt-0.5 w-4 h-4 rounded accent-red-600 cursor-pointer shrink-0">
+                        <div class="min-w-0 flex-1">
+                            <div class="font-bold text-gray-800 dark:text-gray-100 flex items-center justify-between gap-2">
+                                <span><i class="fa-solid fa-images text-blue-500 me-1"></i> Hapus Gambar Tabel (Benefit, Spesifikasi, dll.)</span>
+                                <span id="deleteTableImagesBadge"
+                                    class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 shrink-0">0 gambar</span>
+                            </div>
+                            <p id="deleteTableImagesDesc" class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                                Menghapus file gambar tabel beresolusi penuh yang terlampir pada manfaat &amp; spesifikasi produk ini di Google Drive.
+                            </p>
+                        </div>
+                    </label>
+
+                    <!-- Opsi 2: Hapus Dokumen & Folder Produk di Google Drive -->
+                    <label id="lblDeleteProductDocs"
+                        class="flex items-start gap-2.5 p-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-700/40 hover:border-red-300 dark:hover:border-red-700 transition cursor-pointer select-none">
+                        <input type="checkbox" id="chkDeleteProductDocs" checked
+                            class="mt-0.5 w-4 h-4 rounded accent-red-600 cursor-pointer shrink-0">
+                        <div class="min-w-0 flex-1">
+                            <div class="font-bold text-gray-800 dark:text-gray-100 flex items-center justify-between gap-2">
+                                <span><i class="fa-solid fa-folder-minus text-amber-500 me-1"></i> Hapus Dokumen &amp; Folder Produk di Google Drive</span>
+                                <span id="deleteProductDocsBadge"
+                                    class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 shrink-0">0 dokumen</span>
+                            </div>
+                            <p id="deleteProductDocsDesc" class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                                Menghapus seluruh dokumen produk (Brosur, Ringkasan Polis, dll.) sekaligus menghapus folder produknya di Google Drive.
+                            </p>
+                        </div>
+                    </label>
+                </div>
+
                 <p class="text-[11px] text-gray-500 dark:text-gray-400">
                     <i class="fa-solid fa-triangle-exclamation text-amber-500 me-1"></i>
                     Data baris produk yang dihapus akan langsung dihapus dari Master Google Sheets dan tidak dapat
@@ -5727,8 +5780,52 @@
             }
         }
 
-        // --- HAPUS PRODUK (SINGLE & MULTI-SELECT DENGAN KONFIRMASI) ---
+        // --- HAPUS PRODUK (SINGLE & MULTI-SELECT DENGAN KONFIRMASI + OPSI HAPUS GAMBAR TABEL & DOKUMEN DRIVE) ---
         let pendingDeleteProductIds = [];
+
+        function extractProductTableImagesInfo(targetProducts) {
+            let totalCount = 0;
+            const driveIdSet = new Set();
+
+            (targetProducts || []).forEach(p => {
+                if (!p || !p.attributes) return;
+                Object.values(p.attributes).forEach(val => {
+                    if (!val || val === "-") return;
+                    const { images } = splitTextAndImages(val);
+                    totalCount += images.length;
+                    images.forEach(src => {
+                        if (String(src).startsWith("drive:")) {
+                            const fId = String(src).slice(6).trim();
+                            if (fId) driveIdSet.add(fId);
+                        }
+                    });
+                });
+            });
+
+            return {
+                totalCount,
+                driveFileIds: Array.from(driveIdSet)
+            };
+        }
+
+        function extractProductDocumentsInfo(targetProducts) {
+            let totalDocs = 0;
+            const docIdSet = new Set();
+
+            (targetProducts || []).forEach(p => {
+                if (!p || !p.name) return;
+                const docs = getDocumentsForProduct(p.name);
+                totalDocs += docs.length;
+                docs.forEach(d => {
+                    if (d && d.fileId) docIdSet.add(d.fileId);
+                });
+            });
+
+            return {
+                totalDocs,
+                docFileIds: Array.from(docIdSet)
+            };
+        }
 
         function openDeleteConfirmModal(idsArray, event = null) {
             if (event) event.stopPropagation();
@@ -5748,15 +5845,65 @@
 
             summaryEl.innerHTML = `Apakah Anda yakin ingin menghapus <strong>${targets.length} produk</strong> berikut dari database?`;
 
-            listEl.innerHTML = targets.map(p => `
-                <div class="flex items-center justify-between gap-2 py-1 border-b last:border-b-0 border-red-200/60 dark:border-red-800/40">
-                    <div>
-                        <span class="font-bold text-gray-900 dark:text-gray-100 block">${p.name}</span>
-                        <span class="text-[11px] text-gray-500 dark:text-gray-400">${p.company}</span>
+            listEl.innerHTML = targets.map(p => {
+                const pImgs = extractProductTableImagesInfo([p]).totalCount;
+                const pDocs = getDocumentsForProduct(p.name).length;
+                return `
+                    <div class="flex items-center justify-between gap-2 py-1.5 border-b last:border-b-0 border-red-200/60 dark:border-red-800/40">
+                        <div class="min-w-0">
+                            <span class="font-bold text-gray-900 dark:text-gray-100 block truncate">${escapeHtml(p.name)}</span>
+                            <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                                <span>${escapeHtml(p.company)}</span>
+                                ${pImgs > 0 ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-blue-100/80 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-semibold"><i class="fa-solid fa-images me-0.5"></i>${pImgs} Gambar</span>` : ''}
+                                ${pDocs > 0 ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-amber-100/80 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 font-semibold"><i class="fa-solid fa-paperclip me-0.5"></i>${pDocs} Dokumen</span>` : ''}
+                            </div>
+                        </div>
+                        ${getCategoryBadge(p.category)}
                     </div>
-                    ${getCategoryBadge(p.category)}
-                </div>
-            `).join('');
+                `;
+            }).join('');
+
+            // Hitung total gambar tabel & dokumen Drive untuk opsi checklist
+            const imgInfo = extractProductTableImagesInfo(targets);
+            const docInfo = extractProductDocumentsInfo(targets);
+
+            const chkImgs = document.getElementById("chkDeleteTableImages");
+            const badgeImgs = document.getElementById("deleteTableImagesBadge");
+            const descImgs = document.getElementById("deleteTableImagesDesc");
+            const lblImgs = document.getElementById("lblDeleteTableImages");
+
+            if (chkImgs && badgeImgs && descImgs && lblImgs) {
+                badgeImgs.textContent = `${imgInfo.totalCount} gambar`;
+                if (imgInfo.totalCount > 0) {
+                    chkImgs.checked = true;
+                    chkImgs.disabled = false;
+                    lblImgs.classList.remove("opacity-60");
+                    descImgs.innerHTML = `Menghapus <strong>${imgInfo.totalCount} gambar tabel</strong> pada Benefit, Spesifikasi, Alokasi Kontribusi, atau Charges milik produk ini (termasuk ${imgInfo.driveFileIds.length} file HD di Google Drive).`;
+                } else {
+                    chkImgs.checked = false;
+                    chkImgs.disabled = true;
+                    lblImgs.classList.add("opacity-60");
+                    descImgs.textContent = "Tidak ada gambar tabel pada produk yang dipilih.";
+                }
+            }
+
+            const chkDocs = document.getElementById("chkDeleteProductDocs");
+            const badgeDocs = document.getElementById("deleteProductDocsBadge");
+            const descDocs = document.getElementById("deleteProductDocsDesc");
+            const lblDocs = document.getElementById("lblDeleteProductDocs");
+
+            if (chkDocs && badgeDocs && descDocs && lblDocs) {
+                badgeDocs.textContent = `${docInfo.totalDocs} dokumen`;
+                chkDocs.disabled = false;
+                lblDocs.classList.remove("opacity-60");
+                if (docInfo.totalDocs > 0) {
+                    chkDocs.checked = true;
+                    descDocs.innerHTML = `Menghapus seluruh <strong>${docInfo.totalDocs} dokumen produk</strong> di Google Drive beserta <strong>folder produknya</strong> secara otomatis.`;
+                } else {
+                    chkDocs.checked = true;
+                    descDocs.innerHTML = `Tidak ada dokumen terdeteksi. Jika folder produk masih ada di Google Drive, folder kosongnya akan ikut dibersihkan.`;
+                }
+            }
 
             document.getElementById("deleteConfirmModal").classList.remove("hidden");
         }
@@ -5775,13 +5922,62 @@
                 return;
             }
 
+            const deleteTableImages = Boolean(document.getElementById("chkDeleteTableImages")?.checked);
+            const deleteProductDocs = Boolean(document.getElementById("chkDeleteProductDocs")?.checked);
+
+            const imgInfo = extractProductTableImagesInfo(targets);
+            const docInfo = extractProductDocumentsInfo(targets);
+
             const btnExec = document.getElementById("btnExecuteDelete");
             btnExec.disabled = true;
             btnExec.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menghapus...`;
 
             try {
+                // 1. Jika opsi Hapus Gambar Tabel dicentang, hapus file gambar HD di Google Drive
+                if (deleteTableImages && imgInfo.driveFileIds.length > 0) {
+                    btnExec.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menghapus Gambar Tabel (${imgInfo.driveFileIds.length})...`;
+                    await Promise.allSettled(
+                        imgInfo.driveFileIds.map(fileId => {
+                            delete driveImageCache[fileId];
+                            return fetch(APPS_SCRIPT_URL, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                                body: JSON.stringify({
+                                    action: "delete_document",
+                                    fileId: fileId
+                                })
+                            });
+                        })
+                    );
+                }
+
+                // 2. Jika opsi Hapus Dokumen & Folder Produk di Google Drive dicentang, hapus seluruh dokumen & foldernya
+                if (deleteProductDocs && docInfo.docFileIds.length > 0) {
+                    btnExec.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menghapus Dokumen & Folder Drive (${docInfo.docFileIds.length})...`;
+                    await Promise.allSettled(
+                        docInfo.docFileIds.map(fileId =>
+                            fetch(APPS_SCRIPT_URL, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                                body: JSON.stringify({
+                                    action: "delete_document",
+                                    fileId: fileId,
+                                    deleteEmptyParentFolder: true
+                                })
+                            })
+                        )
+                    );
+                    const deletedDocIdSet = new Set(docInfo.docFileIds);
+                    productDocuments = productDocuments.filter(d => !deletedDocIdSet.has(d.fileId));
+                }
+
+                // 3. Hapus baris produk dari Master Google Sheets (+ instruksi pembersihan folder/gambar di backend Apps Script)
+                btnExec.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menghapus Produk dari Sheets...`;
                 const payload = {
                     action: "delete",
+                    deleteTableImages: deleteTableImages,
+                    tableImageFileIds: deleteTableImages ? imgInfo.driveFileIds : [],
+                    deleteProductDocs: deleteProductDocs,
                     items: targets.map(p => ({
                         sheetName: p.category,
                         productName: p.name
