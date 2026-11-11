@@ -48,7 +48,97 @@ function getOrCreateRootDocFolder() {
   return rootFolder;
 }
 
+// Helper Global: Ambil seluruh konfigurasi aman & data produk dari Master Spreadsheet
+// (Memungkinkan Google Spreadsheet dikunci 'Restricted / Private' tanpa perlu dibuka ke publik via /gviz/tq)
+function buildAllProductDataResponse() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const DEFAULT_TABS = ["Konven", "Syariah", "HS", "DPLK"];
+  const configuredTabs = [];
+  const nonBenefitColumns = [];
+  let driveFolderId = "";
+
+  const configSheet = ss.getSheetByName("Config");
+  if (configSheet && configSheet.getLastRow() > 0 && configSheet.getLastColumn() > 0) {
+    const cfgValues = configSheet.getDataRange().getDisplayValues();
+    for (let i = 1; i < cfgValues.length; i++) {
+      const row = cfgValues[i];
+      const type = String(row[0] || "").trim().toLowerCase();
+      const val = String(row[1] || "").trim();
+      const extra = String(row[2] || "").trim();
+
+      if ((type === "sheet" || type === "tab" || type === "kategori" || type === "category") && val) {
+        const lowerVal = val.toLowerCase();
+        if (
+          lowerVal !== "config" &&
+          lowerVal !== "documents" &&
+          lowerVal !== "users" &&
+          !configuredTabs.some(function(t) { return t.toLowerCase() === lowerVal; })
+        ) {
+          configuredTabs.push(val);
+        }
+      } else if (type === "non-benefit" && val) {
+        if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+          nonBenefitColumns.push(val);
+        }
+      } else if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
+        driveFolderId = extra;
+      }
+      // Catatan Keamanan: Baris 'Invite Code' TIDAK dimasukkan ke response agar tetap rahasia di server
+    }
+  }
+
+  const tabsToLoad = configuredTabs.length > 0 ? configuredTabs : DEFAULT_TABS;
+  const sheetsData = [];
+
+  tabsToLoad.forEach(function(tabName) {
+    const sheet = ss.getSheetByName(tabName);
+    if (!sheet || sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+      sheetsData.push({
+        sheetName: tabName,
+        exists: Boolean(sheet),
+        headers: [],
+        rows: []
+      });
+      return;
+    }
+
+    const displayVals = sheet.getDataRange().getDisplayValues();
+    const headers = (displayVals[0] || []).map(function(h) { return String(h || "").trim(); });
+    const rows = displayVals.slice(1);
+
+    sheetsData.push({
+      sheetName: tabName,
+      exists: true,
+      headers: headers,
+      rows: rows
+    });
+  });
+
+  return {
+    status: "success",
+    action: "get_all_product_data",
+    config: {
+      tabs: tabsToLoad,
+      nonBenefitColumns: nonBenefitColumns,
+      driveFolderId: driveFolderId
+    },
+    sheets: sheetsData
+  };
+}
+
 function doGet(e) {
+  // 0. Ambil seluruh data produk & konfigurasi aman langsung via Apps Script (Tanpa perlu /gviz/tq publik)
+  if (e && e.parameter && e.parameter.action === "get_all_product_data") {
+    try {
+      const result = buildAllProductDataResponse();
+      return ContentService.createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
   // 1. Ambil daftar seluruh dokumen langsung dari folder Google Drive (Tanpa Sheet 'Documents')
   if (e && e.parameter && e.parameter.action === "get_all_documents") {
     try {
@@ -247,7 +337,8 @@ function doPost(e) {
     // Helper: Pembersihan Kolom Manfaat Kosong
     function cleanupEmptyBenefitColumns(targetSheet) {
       try {
-        if (String(targetSheet.getName() || "").trim().toLowerCase() === "config") return;
+        const sNameLower = String(targetSheet.getName() || "").trim().toLowerCase();
+        if (sNameLower === "config" || sNameLower === "users") return;
         const lastCol = targetSheet.getLastColumn();
         const lastRow = targetSheet.getLastRow();
         if (lastCol <= 1 || lastRow <= 1) return;
@@ -283,6 +374,272 @@ function doPost(e) {
     function jsonResponse(obj) {
       return ContentService.createTextOutput(JSON.stringify(obj))
         .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 00. ACTION: GET_ALL_PRODUCT_DATA (Via POST)
+    if (payload.action === "get_all_product_data") {
+      return jsonResponse(buildAllProductDataResponse());
+    }
+
+    // ====================================================
+    // 0. SISTEM AUTENTIKASI (SIGN UP, SIGN IN, FORGOT PASSWORD OTP EMAIL)
+    // ====================================================
+    function hashPasswordWithSalt(password, salt) {
+      const raw = String(salt || "") + "::IDCM_AUTH::" + String(password || "");
+      const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+      return digest.map(function(b) {
+        const v = (b < 0) ? b + 256 : b;
+        return ("0" + v.toString(16)).slice(-2);
+      }).join("");
+    }
+
+    function getOrCreateUsersSheet() {
+      let uSheet = ss.getSheetByName("Users");
+      const headers = ["Username", "Email", "PasswordHash", "Salt", "CreatedAt", "ResetOTP", "OTPExpiry", "LastLogin"];
+      if (!uSheet) {
+        uSheet = ss.insertSheet("Users");
+        uSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+        uSheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+      } else if (uSheet.getLastRow() === 0) {
+        uSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+        uSheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+      }
+      return uSheet;
+    }
+
+    function getSignupInviteCode() {
+      const DEFAULT_INVITE_CODE = "IDCM2026";
+      try {
+        const configSheet = ss.getSheetByName("Config");
+        if (!configSheet) return DEFAULT_INVITE_CODE;
+        const cfgData = configSheet.getDataRange().getValues();
+        for (let i = 1; i < cfgData.length; i++) {
+          const key = String(cfgData[i][1] || "").trim().toLowerCase();
+          if (key === "invite code" || key === "signup invite code" || key === "kode akses") {
+            const codeVal = String(cfgData[i][2] || "").trim();
+            if (codeVal) return codeVal;
+          }
+        }
+        // Jika belum ada baris Invite Code di Sheet Config, tambahkan otomatis agar mudah diubah admin
+        configSheet.appendRow(["Setting", "Invite Code", DEFAULT_INVITE_CODE]);
+      } catch (e) {
+        console.warn("Gagal membaca Invite Code dari Config:", e);
+      }
+      return DEFAULT_INVITE_CODE;
+    }
+
+    function maskEmailAddress(email) {
+      const str = String(email || "").trim();
+      const atIdx = str.indexOf("@");
+      if (atIdx <= 1) return str;
+      const namePart = str.substring(0, atIdx);
+      const domainPart = str.substring(atIdx);
+      const visibleLen = Math.min(2, namePart.length);
+      return namePart.substring(0, visibleLen) + "***" + domainPart;
+    }
+
+    // 0A. ACTION: AUTH_SIGNUP
+    if (payload.action === "auth_signup") {
+      const username = String(payload.username || "").trim();
+      const email = String(payload.email || "").trim().toLowerCase();
+      const password = String(payload.password || "");
+      const inviteCode = String(payload.inviteCode || "").trim();
+
+      if (username.length < 3) {
+        return jsonResponse({ status: "error", message: "Username minimal harus 3 karakter." });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return jsonResponse({ status: "error", message: "Format alamat email tidak valid." });
+      }
+      if (password.length < 6) {
+        return jsonResponse({ status: "error", message: "Password minimal harus 6 karakter." });
+      }
+
+      const validInviteCode = getSignupInviteCode();
+      if (inviteCode !== validInviteCode) {
+        return jsonResponse({ status: "error", message: "Kode Akses Tim (Invite Code) tidak sesuai." });
+      }
+
+      const uSheet = getOrCreateUsersSheet();
+      const uData = uSheet.getDataRange().getValues();
+      for (let r = 1; r < uData.length; r++) {
+        const existingUser = String(uData[r][0] || "").trim().toLowerCase();
+        const existingEmail = String(uData[r][1] || "").trim().toLowerCase();
+        if (existingUser === username.toLowerCase()) {
+          return jsonResponse({ status: "error", message: "Username sudah digunakan. Silakan pilih username lain." });
+        }
+        if (existingEmail === email) {
+          return jsonResponse({ status: "error", message: "Alamat email sudah terdaftar. Silakan Sign In atau gunakan fitur Lupa Password." });
+        }
+      }
+
+      const salt = Utilities.getUuid();
+      const pwdHash = hashPasswordWithSalt(password, salt);
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
+      writeRowAsPlainText(uSheet, uSheet.getLastRow() + 1, [username, email, pwdHash, salt, nowStr, "", "", nowStr]);
+
+      return jsonResponse({
+        status: "success",
+        action: "auth_signup",
+        user: { username: username, email: email }
+      });
+    }
+
+    // 0B. ACTION: AUTH_SIGNIN
+    if (payload.action === "auth_signin") {
+      const identifier = String(payload.identifier || "").trim().toLowerCase();
+      const password = String(payload.password || "");
+
+      if (!identifier || !password) {
+        return jsonResponse({ status: "error", message: "Mohon isi Username/Email dan Password." });
+      }
+
+      const uSheet = getOrCreateUsersSheet();
+      const uData = uSheet.getDataRange().getValues();
+      let foundRowIdx = -1;
+      for (let r = 1; r < uData.length; r++) {
+        const uName = String(uData[r][0] || "").trim().toLowerCase();
+        const uEmail = String(uData[r][1] || "").trim().toLowerCase();
+        if (uName === identifier || uEmail === identifier) {
+          foundRowIdx = r;
+          break;
+        }
+      }
+
+      if (foundRowIdx === -1) {
+        return jsonResponse({ status: "error", message: "Akun tidak ditemukan. Periksa kembali Username/Email Anda atau daftar akun baru." });
+      }
+
+      const row = uData[foundRowIdx];
+      const storedHash = String(row[2] || "").trim();
+      const storedSalt = String(row[3] || "").trim();
+      const computedHash = hashPasswordWithSalt(password, storedSalt);
+
+      if (computedHash !== storedHash) {
+        return jsonResponse({ status: "error", message: "Password yang Anda masukkan salah." });
+      }
+
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
+      uSheet.getRange(foundRowIdx + 1, 8).setNumberFormat("@").setValue(nowStr);
+
+      return jsonResponse({
+        status: "success",
+        action: "auth_signin",
+        user: {
+          username: String(row[0] || "").trim(),
+          email: String(row[1] || "").trim()
+        }
+      });
+    }
+
+    // 0C. ACTION: AUTH_REQUEST_OTP (Kirim Kode OTP 6 Digit ke Email)
+    if (payload.action === "auth_request_otp") {
+      const identifier = String(payload.identifier || "").trim().toLowerCase();
+      if (!identifier) {
+        return jsonResponse({ status: "error", message: "Masukkan Email atau Username akun Anda." });
+      }
+
+      const uSheet = getOrCreateUsersSheet();
+      const uData = uSheet.getDataRange().getValues();
+      let foundRowIdx = -1;
+      for (let r = 1; r < uData.length; r++) {
+        const uName = String(uData[r][0] || "").trim().toLowerCase();
+        const uEmail = String(uData[r][1] || "").trim().toLowerCase();
+        if (uName === identifier || uEmail === identifier) {
+          foundRowIdx = r;
+          break;
+        }
+      }
+
+      if (foundRowIdx === -1) {
+        return jsonResponse({ status: "error", message: "Akun dengan Email/Username tersebut tidak ditemukan." });
+      }
+
+      const targetUsername = String(uData[foundRowIdx][0] || "").trim();
+      const targetEmail = String(uData[foundRowIdx][1] || "").trim();
+      const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+      const expiryMs = String(Date.now() + 10 * 60 * 1000); // Berlaku 10 menit
+
+      uSheet.getRange(foundRowIdx + 1, 6, 1, 2).setNumberFormats([["@", "@"]]).setValues([[otpCode, expiryMs]]);
+
+      const emailHtml = [
+        "<div style='font-family:Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;color:#1e293b;'>",
+        "<h2 style='margin:0 0 12px 0;color:#1e3a8a;font-size:18px;'>Reset Password — Comparison Maker</h2>",
+        "<p style='font-size:14px;line-height:1.5;margin:0 0 16px 0;'>Halo <strong>" + targetUsername + "</strong>,</p>",
+        "<p style='font-size:14px;line-height:1.5;margin:0 0 16px 0;'>Berikut adalah kode OTP 6 digit untuk mereset password akun Anda (berlaku selama <strong>10 menit</strong>):</p>",
+        "<div style='background:#eff6ff;border:1px dashed #3b82f6;border-radius:10px;padding:16px;text-align:center;font-size:28px;font-weight:bold;letter-spacing:6px;color:#1d4ed8;margin-bottom:16px;'>" + otpCode + "</div>",
+        "<p style='font-size:12px;color:#64748b;margin:0;'>Jika Anda tidak merasa meminta pengaturan ulang password, abaikan email ini.</p>",
+        "</div>"
+      ].join("");
+
+      MailApp.sendEmail({
+        to: targetEmail,
+        subject: "[" + otpCode + "] Kode OTP Reset Password - Life Insurance Comparison Maker",
+        htmlBody: emailHtml
+      });
+
+      return jsonResponse({
+        status: "success",
+        action: "auth_request_otp",
+        emailMasked: maskEmailAddress(targetEmail),
+        message: "Kode OTP 6 digit telah dikirim ke " + maskEmailAddress(targetEmail)
+      });
+    }
+
+    // 0D. ACTION: AUTH_RESET_PASSWORD (Verifikasi OTP & Simpan Password Baru)
+    if (payload.action === "auth_reset_password") {
+      const identifier = String(payload.identifier || "").trim().toLowerCase();
+      const otpInput = String(payload.otp || "").trim();
+      const newPassword = String(payload.newPassword || "");
+
+      if (!identifier || !otpInput || !newPassword) {
+        return jsonResponse({ status: "error", message: "Lengkapi Kode OTP dan Password Baru." });
+      }
+      if (newPassword.length < 6) {
+        return jsonResponse({ status: "error", message: "Password baru minimal harus 6 karakter." });
+      }
+
+      const uSheet = getOrCreateUsersSheet();
+      const uData = uSheet.getDataRange().getValues();
+      let foundRowIdx = -1;
+      for (let r = 1; r < uData.length; r++) {
+        const uName = String(uData[r][0] || "").trim().toLowerCase();
+        const uEmail = String(uData[r][1] || "").trim().toLowerCase();
+        if (uName === identifier || uEmail === identifier) {
+          foundRowIdx = r;
+          break;
+        }
+      }
+
+      if (foundRowIdx === -1) {
+        return jsonResponse({ status: "error", message: "Akun tidak ditemukan." });
+      }
+
+      const savedOtp = String(uData[foundRowIdx][5] || "").trim();
+      const savedExpiry = Number(uData[foundRowIdx][6] || 0);
+
+      if (!savedOtp || savedOtp !== otpInput) {
+        return jsonResponse({ status: "error", message: "Kode OTP tidak valid. Periksa kembali kode 6 digit di email Anda." });
+      }
+      if (Date.now() > savedExpiry) {
+        return jsonResponse({ status: "error", message: "Kode OTP sudah kedaluwarsa (lebih dari 10 menit). Silakan minta kode OTP baru." });
+      }
+
+      const newSalt = Utilities.getUuid();
+      const newHash = hashPasswordWithSalt(newPassword, newSalt);
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
+
+      uSheet.getRange(foundRowIdx + 1, 3, 1, 2).setNumberFormats([["@", "@"]]).setValues([[newHash, newSalt]]);
+      uSheet.getRange(foundRowIdx + 1, 6, 1, 3).setNumberFormats([["@", "@", "@"]]).setValues([["", "", nowStr]]);
+
+      return jsonResponse({
+        status: "success",
+        action: "auth_reset_password",
+        user: {
+          username: String(uData[foundRowIdx][0] || "").trim(),
+          email: String(uData[foundRowIdx][1] || "").trim()
+        }
+      });
     }
 
     // ====================================================
@@ -610,12 +967,13 @@ function doPost(e) {
 }
 
 // ====================================================
-// FUNGSI KHUSUS UNTUK MEMICU POP-UP IZIN TULIS (WRITE) GOOGLE DRIVE
+// FUNGSI KHUSUS UNTUK MEMICU POP-UP IZIN GOOGLE DRIVE & EMAIL (MAILAPP)
 // ====================================================
 function authorizeDrive() {
   const tempFile = DriveApp.createFile("test_permission.txt", "OK");
   tempFile.setTrashed(true);
-  console.log("Izin Google Drive Full Access (Tulis & Buat Folder) Berhasil Aktif!");
+  const quota = MailApp.getRemainingDailyQuota();
+  console.log("Izin Google Drive & MailApp Berhasil Aktif! Sisa kuota email harian:", quota);
 }
 
 // ====================================================
