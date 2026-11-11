@@ -502,10 +502,124 @@
         }
 
         // ====================================================
-        // FUNGSI IN-APP DOCUMENT VIEWER (PREVIEW LANGSUNG DI WEB)
+        // FUNGSI IN-APP DOCUMENT VIEWER (PREVIEW LANGSUNG DI WEB & DIRECT DOWNLOAD TANPA TAB GDRIVE)
         // ====================================================
 
         let currentInlineDocBlobUrl = null;
+        let currentInlineDocMeta = null;
+        let currentInlineExcelWorkbook = null;
+        let currentInlineExcelSheetIdx = 0;
+        let currentInlineExcelZoom = 1;
+        const directDocBlobCache = {};
+
+        function triggerBlobDownload(blob, fileName) {
+            const safeName = String(fileName || "dokumen").trim();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = safeName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        }
+
+        function base64ToUint8Array(b64Str) {
+            const byteCharacters = atob(b64Str);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            return new Uint8Array(byteNumbers);
+        }
+
+        function inferMimeTypeFromFileName(fileName, fallbackMime) {
+            const ext = String(fileName || "").split('.').pop().toLowerCase();
+            const map = {
+                pdf: "application/pdf",
+                xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+                xls: "application/vnd.ms-excel",
+                csv: "text/csv",
+                docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                doc: "application/msword",
+                pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ppt: "application/vnd.ms-powerpoint",
+                png: "image/png",
+                jpg: "image/jpeg",
+                jpeg: "image/jpeg",
+                webp: "image/webp"
+            };
+            return map[ext] || fallbackMime || "application/octet-stream";
+        }
+
+        async function downloadDocumentDirect(fileId, fileName, btnEl = null, fallbackUrl = "") {
+            if (!fileId) {
+                if (fallbackUrl) window.open(fallbackUrl, "_blank");
+                return;
+            }
+
+            if (directDocBlobCache[fileId] && directDocBlobCache[fileId].blob) {
+                triggerBlobDownload(directDocBlobCache[fileId].blob, fileName || directDocBlobCache[fileId].fileName);
+                return;
+            }
+
+            const originalHtml = btnEl ? btnEl.innerHTML : "";
+            if (btnEl) {
+                btnEl.disabled = true;
+                btnEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Mengunduh...</span>`;
+            }
+
+            try {
+                const resp = await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({
+                        action: "get_file_base64",
+                        fileId: fileId,
+                        asPdf: false
+                    })
+                });
+                const data = await resp.json();
+                if (!data || data.status !== "success" || !data.base64) {
+                    throw new Error((data && data.message) || "Gagal mengambil file dari server.");
+                }
+
+                const finalName = fileName || data.fileName || "dokumen";
+                const mimeType = inferMimeTypeFromFileName(finalName, data.mimeType);
+                const byteArray = base64ToUint8Array(data.base64);
+                const blob = new Blob([byteArray], { type: mimeType });
+
+                directDocBlobCache[fileId] = { blob, fileName: finalName, mimeType, byteArray };
+                triggerBlobDownload(blob, finalName);
+
+                if (btnEl) {
+                    btnEl.innerHTML = `<i class="fa-solid fa-check"></i> <span>Terunduh!</span>`;
+                    setTimeout(() => {
+                        btnEl.disabled = false;
+                        btnEl.innerHTML = originalHtml;
+                    }, 1200);
+                }
+            } catch (err) {
+                console.error("Gagal mengunduh file secara langsung:", err);
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.innerHTML = originalHtml;
+                }
+                const targetUrl = fallbackUrl || `https://drive.google.com/uc?export=download&id=${fileId}`;
+                window.open(targetUrl, "_blank");
+            }
+        }
+
+        function handleInlineDocViewerDownload(btnEl) {
+            if (!currentInlineDocMeta) return;
+            downloadDocumentDirect(
+                currentInlineDocMeta.fileId,
+                currentInlineDocMeta.fileName,
+                btnEl,
+                currentInlineDocMeta.downloadUrl
+            );
+        }
 
         function closeInlineDocViewer() {
             const modal = document.getElementById("inlineDocViewerModal");
@@ -516,6 +630,153 @@
                 URL.revokeObjectURL(currentInlineDocBlobUrl);
                 currentInlineDocBlobUrl = null;
             }
+            currentInlineExcelWorkbook = null;
+        }
+
+        function renderInlineExcelSheetTable(ws) {
+            const xlsxLib = window.XLSX_CORE || window.XLSX;
+            if (!ws || !xlsxLib) {
+                return `<div class="p-8 text-center text-gray-500 dark:text-gray-400 text-xs">Sheet kosong.</div>`;
+            }
+
+            let maxRow = 0;
+            let maxCol = 0;
+            let hasAnyCell = false;
+            Object.keys(ws).forEach(key => {
+                if (key[0] === '!') return;
+                const cell = ws[key];
+                if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== "") {
+                    const dec = xlsxLib.utils.decode_cell(key);
+                    if (dec.r <= 1500 && dec.c <= 120) {
+                        if (dec.r > maxRow) maxRow = dec.r;
+                        if (dec.c > maxCol) maxCol = dec.c;
+                        hasAnyCell = true;
+                    }
+                }
+            });
+
+            const merges = Array.isArray(ws['!merges']) ? ws['!merges'] : [];
+            merges.forEach(m => {
+                if (m.e.r <= 1500 && m.e.c <= 120) {
+                    if (m.e.r > maxRow) maxRow = m.e.r;
+                    if (m.e.c > maxCol) maxCol = m.e.c;
+                }
+            });
+
+            if (!hasAnyCell && merges.length === 0) {
+                return `<div class="p-8 text-center text-gray-500 dark:text-gray-400 text-xs">Sheet ini tidak memiliki data.</div>`;
+            }
+
+            const mergeStartMap = {};
+            const mergedCoveredSet = new Set();
+            merges.forEach(m => {
+                const startKey = `${m.s.r},${m.s.c}`;
+                const rowspan = m.e.r - m.s.r + 1;
+                const colspan = m.e.c - m.s.c + 1;
+                mergeStartMap[startKey] = { rowspan, colspan };
+                for (let r = m.s.r; r <= m.e.r; r++) {
+                    for (let c = m.s.c; c <= m.e.c; c++) {
+                        if (r === m.s.r && c === m.s.c) continue;
+                        mergedCoveredSet.add(`${r},${c}`);
+                    }
+                }
+            });
+
+            const esc = (s) => String(s ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+
+            let colHeadersHtml = `<th class="sticky top-0 left-0 z-20 bg-slate-200 dark:bg-slate-800 border border-gray-300 dark:border-gray-600 px-2 py-1 text-[10px] font-bold text-gray-600 dark:text-gray-300 text-center w-10">#</th>`;
+            for (let c = 0; c <= maxCol; c++) {
+                const colLetter = xlsxLib.utils.encode_col(c);
+                colHeadersHtml += `<th class="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800 border border-gray-300 dark:border-gray-600 px-3 py-1 text-[11px] font-bold text-gray-700 dark:text-gray-300 text-center min-w-[120px]">${colLetter}</th>`;
+            }
+
+            let rowsHtml = "";
+            for (let r = 0; r <= maxRow; r++) {
+                let rowCellsHtml = `<td class="sticky left-0 z-10 bg-slate-100 dark:bg-slate-800 border border-gray-300 dark:border-gray-600 px-2 py-1 text-[10px] font-bold text-gray-500 dark:text-gray-400 text-center select-none">${r + 1}</td>`;
+                for (let c = 0; c <= maxCol; c++) {
+                    const coordKey = `${r},${c}`;
+                    if (mergedCoveredSet.has(coordKey)) continue;
+
+                    const cellRef = xlsxLib.utils.encode_cell({ r, c });
+                    const cellObj = ws[cellRef];
+                    const formattedText = cellObj ? (cellObj.w !== undefined ? String(cellObj.w) : String(cellObj.v ?? "")) : "";
+                    const mergeInfo = mergeStartMap[coordKey];
+                    const spanAttrs = mergeInfo
+                        ? `${mergeInfo.rowspan > 1 ? ` rowspan="${mergeInfo.rowspan}"` : ''}${mergeInfo.colspan > 1 ? ` colspan="${mergeInfo.colspan}"` : ''}`
+                        : '';
+                    const isFirstColOrHeader = (r === 0 || c === 0);
+                    const cellTone = isFirstColOrHeader && formattedText.trim()
+                        ? "bg-slate-50/90 dark:bg-slate-800/70 font-semibold text-gray-900 dark:text-gray-100"
+                        : "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200";
+
+                    rowCellsHtml += `<td${spanAttrs} class="border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs align-top whitespace-pre-wrap break-words max-w-[360px] ${cellTone}">${esc(formattedText)}</td>`;
+                }
+                rowsHtml += `<tr>${rowCellsHtml}</tr>`;
+            }
+
+            return `
+                <table id="inlineExcelPreviewTable" class="border-collapse text-left w-max min-w-full" style="zoom: ${currentInlineExcelZoom};">
+                    <thead><tr>${colHeadersHtml}</tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            `;
+        }
+
+        function renderInlineExcelWorkbook(wb, sheetIdx = 0) {
+            const content = document.getElementById("inlineDocViewerContent");
+            if (!content || !wb || !wb.SheetNames || wb.SheetNames.length === 0) return;
+
+            currentInlineExcelSheetIdx = Math.max(0, Math.min(wb.SheetNames.length - 1, sheetIdx));
+            const activeSheetName = wb.SheetNames[currentInlineExcelSheetIdx];
+            const ws = wb.Sheets[activeSheetName];
+
+            const tabsHtml = wb.SheetNames.map((sName, idx) => {
+                const isActive = idx === currentInlineExcelSheetIdx;
+                return `
+                    <button type="button" onclick="switchInlineExcelSheet(${idx})"
+                        class="px-3 py-1.5 text-xs font-bold rounded-t-lg border-t border-x transition flex items-center gap-1.5 shrink-0 ${isActive
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:bg-gray-300 dark:hover:bg-gray-700'}">
+                        <i class="fa-solid fa-table-cells text-[10px]"></i>
+                        <span>${sName}</span>
+                    </button>
+                `;
+            }).join('');
+
+            content.innerHTML = `
+                <div class="w-full h-full flex flex-col bg-white dark:bg-gray-900 rounded-xl border border-gray-300 dark:border-gray-700 overflow-hidden shadow-inner">
+                    <div class="px-3 pt-2 bg-gray-100 dark:bg-slate-900 border-b border-gray-300 dark:border-gray-700 flex items-center justify-between gap-2 shrink-0">
+                        <div class="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                            ${tabsHtml}
+                        </div>
+                        <div class="flex items-center gap-1 pb-1.5 shrink-0">
+                            <button type="button" onclick="adjustInlineExcelZoom(-0.1)" class="px-2 py-0.5 text-xs font-bold rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50" title="Perkecil Tabel">-</button>
+                            <span id="inlineExcelZoomBadge" class="text-[11px] font-bold text-gray-700 dark:text-gray-300 px-1.5">${Math.round(currentInlineExcelZoom * 100)}%</span>
+                            <button type="button" onclick="adjustInlineExcelZoom(0.1)" class="px-2 py-0.5 text-xs font-bold rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50" title="Perbesar Tabel">+</button>
+                        </div>
+                    </div>
+                    <div id="inlineExcelTableViewport" class="flex-1 overflow-auto">
+                        ${renderInlineExcelSheetTable(ws)}
+                    </div>
+                </div>
+            `;
+        }
+
+        function switchInlineExcelSheet(idx) {
+            if (!currentInlineExcelWorkbook) return;
+            renderInlineExcelWorkbook(currentInlineExcelWorkbook, idx);
+        }
+
+        function adjustInlineExcelZoom(delta) {
+            currentInlineExcelZoom = Math.min(2.0, Math.max(0.5, Math.round((currentInlineExcelZoom + delta) * 100) / 100));
+            const tbl = document.getElementById("inlineExcelPreviewTable");
+            const badge = document.getElementById("inlineExcelZoomBadge");
+            if (tbl) tbl.style.zoom = String(currentInlineExcelZoom);
+            if (badge) badge.textContent = `${Math.round(currentInlineExcelZoom * 100)}%`;
         }
 
         async function previewDocumentInline(fileId, fileName, docType, downloadUrl) {
@@ -528,18 +789,24 @@
             const errorBox = document.getElementById("inlineDocViewerError");
             const errorMsg = document.getElementById("inlineDocViewerErrorMsg");
             const content = document.getElementById("inlineDocViewerContent");
-            const dlBtn = document.getElementById("inlineDocViewerDownloadBtn");
-            const fallbackDl = document.getElementById("inlineDocViewerFallbackDownload");
 
             if (!modal) return;
 
-            // Bersihkan objek blob sebelumnya jika ada
             if (currentInlineDocBlobUrl) {
                 URL.revokeObjectURL(currentInlineDocBlobUrl);
                 currentInlineDocBlobUrl = null;
             }
+            currentInlineExcelWorkbook = null;
+            currentInlineExcelZoom = 1;
 
-            // Tampilkan modal dalam kondisi loading
+            const effectiveDlUrl = downloadUrl || `https://drive.google.com/uc?export=download&id=${fileId}`;
+            currentInlineDocMeta = {
+                fileId,
+                fileName: fileName || "Dokumen",
+                docType: docType || "Dokumen",
+                downloadUrl: effectiveDlUrl
+            };
+
             titleEl.textContent = fileName || "Pratinjau Dokumen";
             titleEl.title = fileName || "";
             badgeEl.textContent = docType || "Dokumen";
@@ -548,75 +815,99 @@
             iconEl.className = `w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${fileIconInfo.color} text-sm`;
             iconEl.innerHTML = `<i class="fa-solid ${fileIconInfo.icon}"></i>`;
 
-            const effectiveDlUrl = downloadUrl || `https://drive.google.com/uc?export=download&id=${fileId}`;
-            dlBtn.href = effectiveDlUrl;
-            fallbackDl.href = effectiveDlUrl;
-
             content.innerHTML = "";
             errorBox.classList.add("hidden");
             loader.classList.remove("hidden");
             modal.classList.remove("hidden");
 
             const ext = String(fileName || "").split('.').pop().toLowerCase();
-            const isOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext);
+            const isExcel = ['xls', 'xlsx', 'xlsm', 'xlsb', 'csv'].includes(ext);
+            const isWordOrPpt = ['doc', 'docx', 'ppt', 'pptx'].includes(ext);
 
-            if (isOffice) {
+            if (isExcel) {
+                loaderText.textContent = `Memuat & merender spreadsheet ${ext.toUpperCase()}...`;
+            } else if (isWordOrPpt) {
                 loaderText.textContent = `Mengonversi ${ext.toUpperCase()} ke tampilan PDF resolusi penuh...`;
             } else {
                 loaderText.textContent = "Mengambil data dokumen...";
             }
 
             try {
-                // Minta base64 file via Apps Script backend
-                // Untuk file Office (.docx / .xlsx), sertakan asPdf: true agar Apps Script mengonversinya menjadi PDF
-                const resp = await fetch(APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: "get_file_base64",
-                        fileId: fileId,
-                        asPdf: isOffice
-                    })
-                });
+                let byteArray = null;
+                let mimeType = "";
 
-                const data = await resp.json();
-                if (!data || data.status !== "success" || !data.base64) {
-                    throw new Error(data && data.message ? data.message : "Data file tidak diterima dari server.");
+                if (!isWordOrPpt && directDocBlobCache[fileId] && directDocBlobCache[fileId].byteArray) {
+                    byteArray = directDocBlobCache[fileId].byteArray;
+                    mimeType = directDocBlobCache[fileId].mimeType;
+                } else {
+                    const resp = await fetch(APPS_SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({
+                            action: "get_file_base64",
+                            fileId: fileId,
+                            asPdf: isWordOrPpt
+                        })
+                    });
+
+                    const data = await resp.json();
+                    if (!data || data.status !== "success" || !data.base64) {
+                        throw new Error(data && data.message ? data.message : "Data file tidak diterima dari server.");
+                    }
+
+                    byteArray = base64ToUint8Array(data.base64);
+                    mimeType = data.mimeType || inferMimeTypeFromFileName(fileName);
+
+                    if (!isWordOrPpt) {
+                        const rawMime = inferMimeTypeFromFileName(fileName, data.mimeType);
+                        const origBlob = new Blob([byteArray], { type: rawMime });
+                        directDocBlobCache[fileId] = {
+                            blob: origBlob,
+                            fileName: fileName || data.fileName || "dokumen",
+                            mimeType: rawMime,
+                            byteArray
+                        };
+                    }
                 }
 
-                // Decode base64 menjadi Uint8Array dan Blob
-                const byteCharacters = atob(data.base64);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                if (isExcel) {
+                    const xlsxLib = window.XLSX_CORE || window.XLSX;
+                    if (!xlsxLib) throw new Error("Pustaka pembaca Excel (SheetJS) belum siap.");
+                    const wb = xlsxLib.read(byteArray, { type: 'array' });
+                    currentInlineExcelWorkbook = wb;
+                    renderInlineExcelWorkbook(wb, 0);
+                    loader.classList.add("hidden");
+                    return;
                 }
-                const byteArray = new Uint8Array(byteNumbers);
 
-                // Tentukan MIME type
-                let mimeType = data.mimeType || "application/pdf";
-                if (isOffice) {
-                    mimeType = "application/pdf"; // Hasil konversi selalu PDF
-                } else if (ext === 'pdf') {
+                if (ext === 'pdf') {
                     mimeType = "application/pdf";
                 }
 
                 const blob = new Blob([byteArray], { type: mimeType });
                 currentInlineDocBlobUrl = URL.createObjectURL(blob);
 
-                // Render konten di dalam viewer
                 if (mimeType.startsWith("image/")) {
                     content.innerHTML = `
                         <div class="w-full h-full flex items-center justify-center p-4 overflow-auto">
                             <img src="${currentInlineDocBlobUrl}" alt="${fileName}" class="max-w-full max-h-full object-contain rounded-lg shadow-md border dark:border-gray-700">
                         </div>
                     `;
-                } else {
-                    // PDF / Document Viewer via iframe bawaan browser
+                } else if (mimeType === "application/pdf") {
                     content.innerHTML = `
                         <iframe src="${currentInlineDocBlobUrl}#toolbar=1&navpanes=1" 
                                 class="w-full h-full rounded-xl border dark:border-gray-700 bg-white shadow-inner" 
                                 style="border: none;"></iframe>
                     `;
+                } else {
+                    const origMime = inferMimeTypeFromFileName(fileName, mimeType);
+                    directDocBlobCache[fileId] = {
+                        blob: new Blob([byteArray], { type: origMime }),
+                        fileName: fileName || "dokumen",
+                        mimeType: origMime,
+                        byteArray
+                    };
+                    throw new Error(`Format dokumen (${ext.toUpperCase()}) tidak dapat dikonversi ke PDF secara otomatis. Silakan klik tombol 'Unduh File Langsung' di bawah.`);
                 }
 
                 loader.classList.add("hidden");
@@ -750,6 +1041,224 @@
 <body
     class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans pb-24 transition-colors duration-200">
 
+    <!-- Gerbang Keamanan (Authentication Gate: Sign In, Sign Up, & Forgot Password OTP) -->
+    <div id="authGateOverlay"
+        class="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4 overflow-y-auto">
+        <div
+            class="w-full max-w-md bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/80 overflow-hidden my-auto">
+            <!-- Header Card Auth -->
+            <div class="p-6 bg-gradient-to-r from-blue-900 to-indigo-900 dark:from-slate-950 dark:to-blue-950 text-white text-center relative">
+                <button type="button" onclick="toggleTheme()"
+                    class="absolute top-3.5 right-3.5 w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xs transition"
+                    title="Ganti Tema Light / Dark">
+                    <i class="fa-solid fa-circle-half-stroke"></i>
+                </button>
+                <div class="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center mx-auto mb-3 shadow-inner">
+                    <i class="fa-solid fa-shield-halved text-2xl text-blue-300"></i>
+                </div>
+                <h2 class="text-base sm:text-lg font-extrabold tracking-tight">Life Insurance Comparison Maker</h2>
+                <p class="text-[11px] text-blue-200/90 mt-0.5">Portal Database Produk Asuransi &amp; DPLK</p>
+            </div>
+
+            <!-- Tab Switcher (Sign In / Sign Up) -->
+            <div id="authTabSwitcher" class="grid grid-cols-2 bg-gray-100 dark:bg-slate-800/90 p-1.5 m-5 mb-0 rounded-xl border border-gray-200 dark:border-slate-700">
+                <button type="button" id="tabBtnAuthSignIn" onclick="switchAuthTab('signin')"
+                    class="py-2 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-sm">
+                    <i class="fa-solid fa-right-to-bracket me-1"></i> Sign In
+                </button>
+                <button type="button" id="tabBtnAuthSignUp" onclick="switchAuthTab('signup')"
+                    class="py-2 text-xs font-bold rounded-lg transition text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+                    <i class="fa-solid fa-user-plus me-1"></i> Sign Up
+                </button>
+            </div>
+
+            <!-- Alert / Pesan Status Auth -->
+            <div id="authAlertBox" class="hidden mx-5 mt-4 p-3 rounded-xl text-xs font-medium border"></div>
+
+            <!-- VIEW 1: SIGN IN -->
+            <form id="authViewSignIn" onsubmit="handleSignInSubmit(event)" class="p-5 space-y-3.5 text-xs">
+                <div>
+                    <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Username atau Email</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-user absolute left-3 top-2.5 text-gray-400"></i>
+                        <input type="text" id="authSignInIdentifier" required autocomplete="username"
+                            placeholder="Masukkan username atau email..."
+                            class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="font-bold text-gray-700 dark:text-gray-300">Password</label>
+                        <button type="button" onclick="switchAuthTab('forgot')"
+                            class="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                            Lupa Password?
+                        </button>
+                    </div>
+                    <div class="relative">
+                        <i class="fa-solid fa-lock absolute left-3 top-2.5 text-gray-400"></i>
+                        <input type="password" id="authSignInPassword" required autocomplete="current-password"
+                            placeholder="Masukkan password..."
+                            class="w-full pl-9 pr-9 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        <button type="button" onclick="toggleAuthPasswordVisibility('authSignInPassword', this)"
+                            class="absolute right-2.5 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between pt-0.5">
+                    <label class="inline-flex items-center gap-2 cursor-pointer select-none text-gray-600 dark:text-gray-300">
+                        <input type="checkbox" id="authRememberMe" checked
+                            class="w-4 h-4 rounded text-blue-600 accent-blue-600 cursor-pointer">
+                        <span>Ingat saya di perangkat ini</span>
+                    </label>
+                </div>
+                <button type="submit" id="btnSubmitSignIn"
+                    class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs mt-2">
+                    <i class="fa-solid fa-right-to-bracket"></i> Masuk ke Aplikasi
+                </button>
+            </form>
+
+            <!-- VIEW 2: SIGN UP -->
+            <form id="authViewSignUp" onsubmit="handleSignUpSubmit(event)" class="hidden p-5 space-y-3 text-xs">
+                <div>
+                    <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Username <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <i class="fa-solid fa-user-tag absolute left-3 top-2.5 text-gray-400"></i>
+                        <input type="text" id="authSignUpUsername" required minlength="3" autocomplete="username"
+                            placeholder="Contoh: budi_santoso (min. 3 karakter)"
+                            class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Email Aktif <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <i class="fa-solid fa-envelope absolute left-3 top-2.5 text-gray-400"></i>
+                        <input type="email" id="authSignUpEmail" required autocomplete="email"
+                            placeholder="Digunakan untuk pengiriman OTP jika lupa password"
+                            class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Password <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <input type="password" id="authSignUpPassword" required minlength="6" autocomplete="new-password"
+                                placeholder="Min. 6 karakter"
+                                class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                            <button type="button" onclick="toggleAuthPasswordVisibility('authSignUpPassword', this)"
+                                class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Ulangi Password <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <input type="password" id="authSignUpConfirm" required minlength="6" autocomplete="new-password"
+                                placeholder="Ketik ulang password"
+                                class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                            <button type="button" onclick="toggleAuthPasswordVisibility('authSignUpConfirm', this)"
+                                class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Kode Akses Tim (Invite Code) <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <i class="fa-solid fa-key absolute left-3 top-2.5 text-amber-500"></i>
+                        <input type="password" id="authSignUpInviteCode" required
+                            placeholder="Masukkan kode akses pendaftaran tim..."
+                            class="w-full pl-9 pr-9 py-2 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50/40 dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none">
+                        <button type="button" onclick="toggleAuthPasswordVisibility('authSignUpInviteCode', this)"
+                            class="absolute right-2.5 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-1">Kode Akses dikelola pada tab <strong>Config</strong> di Master Google Sheets.</p>
+                </div>
+                <button type="submit" id="btnSubmitSignUp"
+                    class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs mt-1">
+                    <i class="fa-solid fa-user-check"></i> Daftar &amp; Masuk
+                </button>
+            </form>
+
+            <!-- VIEW 3: FORGOT PASSWORD (OTP EMAIL) -->
+            <div id="authViewForgot" class="hidden p-5 space-y-3.5 text-xs">
+                <div class="flex items-center justify-between">
+                    <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                        <i class="fa-solid fa-unlock-keyhole text-amber-500"></i> Pemulihan Password (OTP Email)
+                    </h3>
+                    <button type="button" onclick="switchAuthTab('signin')"
+                        class="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
+                        <i class="fa-solid fa-arrow-left text-[10px]"></i> Kembali
+                    </button>
+                </div>
+
+                <!-- Step 1: Request OTP -->
+                <form id="authForgotStep1" onsubmit="handleForgotRequestOtp(event)" class="space-y-3">
+                    <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+                        Masukkan <strong>Email</strong> atau <strong>Username</strong> yang terdaftar. Sistem akan mengirimkan kode OTP 6 digit ke alamat email Anda.
+                    </p>
+                    <div>
+                        <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Email atau Username Terdaftar</label>
+                        <div class="relative">
+                            <i class="fa-solid fa-envelope-circle-check absolute left-3 top-2.5 text-gray-400"></i>
+                            <input type="text" id="authForgotIdentifier" required
+                                placeholder="Ketik email atau username Anda..."
+                                class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                    </div>
+                    <button type="submit" id="btnRequestOtp"
+                        class="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i> Kirim Kode OTP ke Email
+                    </button>
+                </form>
+
+                <!-- Step 2: Input OTP & New Password -->
+                <form id="authForgotStep2" onsubmit="handleForgotResetPassword(event)" class="hidden space-y-3 pt-2 border-t dark:border-slate-700">
+                    <div>
+                        <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Kode OTP (6 Digit dari Email)</label>
+                        <input type="text" id="authForgotOtpCode" required maxlength="6" pattern="\d{6}"
+                            placeholder="Contoh: 482910"
+                            class="w-full px-3 py-2 rounded-xl border border-blue-400 dark:border-blue-600 bg-blue-50/40 dark:bg-slate-800 text-center font-mono text-base font-extrabold tracking-[0.35em] text-blue-800 dark:text-blue-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                            <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Password Baru</label>
+                            <div class="relative">
+                                <input type="password" id="authForgotNewPassword" required minlength="6"
+                                    placeholder="Min. 6 karakter"
+                                    class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                <button type="button" onclick="toggleAuthPasswordVisibility('authForgotNewPassword', this)"
+                                    class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Ulangi Password Baru</label>
+                            <div class="relative">
+                                <input type="password" id="authForgotConfirmPassword" required minlength="6"
+                                    placeholder="Ketik ulang"
+                                    class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                <button type="button" onclick="toggleAuthPasswordVisibility('authForgotConfirmPassword', this)"
+                                    class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" id="btnResetPasswordSubmit"
+                        class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-check-double"></i> Simpan Password Baru
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Navbar Header -->
     <header id="mainHeader"
         class="bg-blue-900 dark:bg-slate-900 dark:border-b dark:border-slate-800 text-white p-3.5 sm:p-4 shadow-md sticky top-0 z-40 transition-colors duration-200">
@@ -764,6 +1273,17 @@
             </h1>
 
             <div class="flex flex-wrap items-center gap-2">
+                <!-- Info User Login & Tombol Logout -->
+                <div id="navUserContainer" class="hidden items-center gap-1.5 bg-blue-950/90 dark:bg-slate-950 px-2.5 py-1.5 rounded-lg border border-blue-800 dark:border-slate-800 h-9">
+                    <i class="fa-solid fa-circle-user text-emerald-400 text-sm"></i>
+                    <span id="navUsernameLabel" class="text-xs font-semibold text-blue-100 max-w-[120px] truncate">User</span>
+                    <button type="button" onclick="handleLogout()"
+                        class="ms-1.5 pl-2 border-l border-blue-800 dark:border-slate-700 text-red-300 hover:text-red-200 text-xs font-bold transition flex items-center gap-1"
+                        title="Keluar (Sign Out)">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                        <span class="hidden sm:inline">Keluar</span>
+                    </button>
+                </div>
                 <!-- Tombol Toggle Dark / Light Mode -->
                 <button onclick="toggleTheme()" id="themeToggleBtn"
                     class="bg-blue-800 hover:bg-blue-700 dark:bg-[#0a1128] dark:hover:bg-[#121c3d] text-white w-9 h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-blue-700 dark:border-slate-700"
@@ -967,7 +1487,7 @@
         class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-slate-800 dark:border dark:border-slate-700 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 transition-all transform translate-y-32 z-40">
         <span class="text-sm font-medium whitespace-nowrap"><span id="selectedCount"
                 class="font-bold text-blue-400">0</span> produk dipilih</span>
-        <button onclick="selectAllVisible()"
+        <button id="btnSelectAllVisible" onclick="selectAllVisible()"
             class="text-gray-300 hover:text-white text-xs font-semibold px-2.5 py-1 rounded transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
             <i class="fa-solid fa-check-double me-1"></i> Pilih Semua
         </button>
@@ -1182,24 +1702,61 @@
     </div>
 
     <!-- Modal Perbandingan Side-by-Side -->
-    <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
-        <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-gray-900 dark:bg-slate-950 text-white flex justify-between items-center gap-3">
-                <div class="flex items-center gap-3">
+    <div id="compareModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4 transition-all duration-200">
+        <div id="compareModalDialog"
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700 transition-all duration-200">
+            <div class="p-4 bg-gray-900 dark:bg-slate-950 text-white flex flex-wrap justify-between items-center gap-3">
+                <div class="flex flex-wrap items-center gap-3">
                     <h3 class="font-bold text-lg flex items-center gap-2">
                         <i class="fa-solid fa-code-compare text-blue-400"></i>Perbandingan Produk
                     </h3>
-                    <button onclick="downloadComparisonExcel()"
-                        class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition shadow-sm"
-                        title="Ekspor tabel perbandingan ke Excel">
+                    <button id="btnExportComparisonExcel" onclick="downloadComparisonExcel(this)"
+                        class="bg-green-600 hover:bg-green-500 disabled:opacity-60 disabled:cursor-wait text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition shadow-sm"
+                        title="Ekspor tabel perbandingan ke Excel beserta gambar tabel yang terlampir">
                         <i class="fa-solid fa-file-excel"></i> Ekspor Excel
                     </button>
                 </div>
-                <button onclick="closeComparisonModal()"
-                    class="text-gray-400 hover:text-white text-xl ml-2">&times;</button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <!-- Kontrol Zoom Tabel Perbandingan -->
+                    <div class="flex items-center gap-1 bg-slate-800/90 border border-slate-700 rounded-lg p-1">
+                        <button type="button" onclick="adjustCompareTableZoom(-0.1)"
+                            class="hover:bg-slate-700 text-gray-200 hover:text-white rounded px-2 py-0.5 text-xs font-bold transition"
+                            title="Perkecil Tabel (Zoom Out)">
+                            <i class="fa-solid fa-magnifying-glass-minus"></i>
+                        </button>
+                        <div class="inline-flex items-center bg-slate-900/90 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-semibold"
+                            title="Ketik persentase zoom tabel (40% - 250%) lalu tekan Enter">
+                            <input type="number" id="inputCompareTableZoom" min="40" max="250" step="10" value="100"
+                                onchange="handleCompareTableZoomInput(this)"
+                                onkeydown="if(event.key==='Enter'){this.blur(); event.preventDefault();}"
+                                class="w-11 bg-transparent text-white text-center font-bold text-xs outline-none appearance-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                            <span class="text-[11px] text-gray-400 select-none">%</span>
+                            <button type="button" onclick="resetCompareTableZoom()"
+                                class="ms-1 pl-1 border-l border-slate-700 text-[10px] text-blue-400 hover:text-blue-300 transition"
+                                title="Reset Zoom ke 100%">
+                                <i class="fa-solid fa-rotate-left"></i>
+                            </button>
+                        </div>
+                        <button type="button" onclick="adjustCompareTableZoom(0.1)"
+                            class="hover:bg-slate-700 text-gray-200 hover:text-white rounded px-2 py-0.5 text-xs font-bold transition"
+                            title="Perbesar Tabel (Zoom In)">
+                            <i class="fa-solid fa-magnifying-glass-plus"></i>
+                        </button>
+                    </div>
+
+                    <!-- Tombol Enlarge / Layar Penuh -->
+                    <button type="button" id="btnEnlargeCompareModal" onclick="toggleEnlargeCompareModal()"
+                        class="bg-slate-800 hover:bg-slate-700 text-gray-200 hover:text-white border border-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
+                        title="Perbesar / Layar Penuh (Enlarge)">
+                        <i id="iconEnlargeCompareModal" class="fa-solid fa-expand text-blue-400"></i>
+                        <span id="textEnlargeCompareModal" class="hidden sm:inline">Perbesar</span>
+                    </button>
+
+                    <button onclick="closeComparisonModal()"
+                        class="text-gray-400 hover:text-white text-xl ml-1 leading-none px-1.5">&times;</button>
+                </div>
             </div>
-            <div class="p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer"></div>
+            <div class="p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer" onwheel="handleCompareTableWheel(event)"></div>
         </div>
     </div>
 
@@ -1261,11 +1818,19 @@
                         title="Perkecil (Zoom Out)">
                         <i class="fa-solid fa-magnifying-glass-minus"></i>
                     </button>
-                    <button type="button" id="btnToggleLightboxZoom" onclick="resetLightboxZoom(event)"
-                        class="bg-blue-600/80 hover:bg-blue-500 text-white rounded-lg px-2.5 py-1 text-xs font-semibold transition min-w-[68px] text-center"
-                        title="Klik untuk berganti antara Sesuaikan Layar & Ukuran Asli 100%">
-                        100%
-                    </button>
+                    <div class="inline-flex items-center bg-blue-600/85 hover:bg-blue-600 text-white rounded-lg px-2 py-0.5 text-xs font-semibold transition shadow-sm border border-blue-400/40"
+                        title="Ketik persentase zoom (10% - 500%) lalu tekan Enter">
+                        <input type="number" id="inputLightboxZoom" min="10" max="500" step="5" value="100"
+                            onchange="handleLightboxZoomInput(this)"
+                            onkeydown="if(event.key==='Enter'){this.blur(); event.preventDefault();}"
+                            class="w-12 bg-transparent text-white text-center font-bold text-xs outline-none appearance-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                        <span class="text-[11px] opacity-90 select-none">%</span>
+                        <button type="button" id="btnToggleLightboxZoom" onclick="resetLightboxZoom(event)"
+                            class="ms-1.5 pl-1.5 border-l border-blue-300/40 text-[10px] text-blue-100 hover:text-white transition"
+                            title="Klik untuk berganti antara Sesuaikan Layar & Ukuran Asli 100%">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+                    </div>
                     <button type="button" onclick="adjustLightboxZoom(0.25, event)"
                         class="bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 rounded-lg px-2.5 py-1 text-xs font-bold transition"
                         title="Perbesar (Zoom In)">
@@ -1424,11 +1989,11 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
-                    <a id="inlineDocViewerDownloadBtn" href="#" target="_blank" download
-                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 shadow-sm"
-                        title="Unduh File Asli">
+                    <button type="button" id="inlineDocViewerDownloadBtn" onclick="handleInlineDocViewerDownload(this)"
+                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition flex items-center gap-1.5 shadow-sm"
+                        title="Unduh File Langsung Tanpa Tab Google Drive">
                         <i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Unduh File</span>
-                    </a>
+                    </button>
                     <button type="button" onclick="closeInlineDocViewer()"
                         class="w-8 h-8 rounded-lg text-gray-300 hover:text-white hover:bg-slate-800 flex items-center justify-center text-xl transition leading-none"
                         title="Tutup Pratinjau">
@@ -1447,8 +2012,7 @@
                     </div>
                     <p id="inlineDocViewerLoaderText" class="text-sm font-semibold text-gray-700 dark:text-gray-200">
                         Menyiapkan pratinjau dokumen...</p>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Dokumen Office dikonversi otomatis ke
-                        tampilan PDF resolusi penuh</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Mendukung pratinjau langsung PDF, Spreadsheet Excel, Dokumen Office &amp; Gambar</p>
                 </div>
 
                 <!-- Error State -->
@@ -1463,10 +2027,10 @@
                     <p id="inlineDocViewerErrorMsg" class="text-xs text-gray-600 dark:text-gray-300 max-w-md mb-4">
                         Dokumen tidak dapat dimuat langsung.</p>
                     <div class="flex items-center gap-2">
-                        <a id="inlineDocViewerFallbackDownload" href="#" target="_blank" download
-                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
+                        <button type="button" id="inlineDocViewerFallbackDownload" onclick="handleInlineDocViewerDownload(this)"
+                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
                             <i class="fa-solid fa-download"></i> Unduh File Langsung
-                        </a>
+                        </button>
                         <button type="button" onclick="closeInlineDocViewer()"
                             class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
                             Tutup
@@ -1923,10 +2487,10 @@
 
         function applyLightboxZoom(scale) {
             const imgEl = document.getElementById("imageLightboxTarget");
-            const btnZoom = document.getElementById("btnToggleLightboxZoom");
+            const inputZoom = document.getElementById("inputLightboxZoom");
             if (!imgEl || !imgEl.naturalWidth) return;
 
-            currentLightboxScale = Math.max(0.4, Math.min(3.5, scale));
+            currentLightboxScale = Math.max(0.1, Math.min(5.0, scale));
             const targetW = Math.round(imgEl.naturalWidth * currentLightboxScale);
             const targetH = Math.round(imgEl.naturalHeight * currentLightboxScale);
 
@@ -1934,8 +2498,18 @@
             imgEl.style.height = `${targetH}px`;
             imgEl.style.maxWidth = "none";
 
-            if (btnZoom) {
-                btnZoom.textContent = `${Math.round(currentLightboxScale * 100)}%`;
+            if (inputZoom) {
+                inputZoom.value = Math.round(currentLightboxScale * 100);
+            }
+        }
+
+        function handleLightboxZoomInput(inputEl) {
+            if (!inputEl) return;
+            const parsed = parseFloat(inputEl.value);
+            if (!isNaN(parsed) && parsed > 0) {
+                applyLightboxZoom(parsed / 100);
+            } else {
+                inputEl.value = Math.round(currentLightboxScale * 100);
             }
         }
 
@@ -2478,78 +3052,459 @@
                 })
                 .catch(err => console.warn("Gagal memuat dokumen langsung dari Google Drive:", err));
 
-            // Helper untuk memuat seluruh tab produk yang terdaftar di SHEET_TABS
-            const loadConfiguredProductSheets = () => {
-                syncSheetTabSelectors();
-                SHEET_TABS.forEach((tabName, index) => {
-                    window[`prosesDataSheet${index}`] = function (jsonData) {
-                        processSheetData(jsonData, tabName);
-                        checkAllSheetsLoaded();
-                    };
+            // Helper Fallback (/gviz/tq) jika Apps Script belum di-redeploy versi terbaru
+            const loadViaLegacyGviz = () => {
+                const loadConfiguredProductSheets = () => {
+                    syncSheetTabSelectors();
+                    SHEET_TABS.forEach((tabName, index) => {
+                        window[`prosesDataSheet${index}`] = function (jsonData) {
+                            processSheetData(jsonData, tabName);
+                            checkAllSheetsLoaded();
+                        };
 
-                    const script = document.createElement('script');
-                    script.onerror = () => {
-                        sheetsFailed++;
-                        checkAllSheetsLoaded();
-                    };
-                    script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${encodeURIComponent(tabName)}&headers=1&tqx=responseHandler:prosesDataSheet${index}&t=${Date.now()}`;
-                    document.body.appendChild(script);
-                });
+                        const script = document.createElement('script');
+                        script.onerror = () => {
+                            sheetsFailed++;
+                            checkAllSheetsLoaded();
+                        };
+                        script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${encodeURIComponent(tabName)}&headers=1&tqx=responseHandler:prosesDataSheet${index}&t=${Date.now()}`;
+                        document.body.appendChild(script);
+                    });
+                };
+
+                let configLoaded = false;
+                window.prosesDataConfig = function (jsonData) {
+                    if (configLoaded) return;
+                    configLoaded = true;
+                    try {
+                        const configuredTabs = [];
+                        if (jsonData && jsonData.table && jsonData.table.rows) {
+                            jsonData.table.rows.forEach(r => {
+                                if (!r || !r.c) return;
+                                const type = String((r.c[0] && r.c[0].v) || "").trim().toLowerCase();
+                                const val = String((r.c[1] && r.c[1].v) || "").trim();
+                                const extra = String((r.c[2] && r.c[2].v) || "").trim();
+
+                                if ((type === "sheet" || type === "tab" || type === "kategori" || type === "category") && val) {
+                                    const lowerVal = val.toLowerCase();
+                                    if (lowerVal !== "config" && lowerVal !== "documents" && lowerVal !== "users" && !configuredTabs.some(t => t.toLowerCase() === lowerVal)) {
+                                        configuredTabs.push(val);
+                                    }
+                                }
+                                if (type === "non-benefit" && val) {
+                                    if (!NON_BENEFIT_COLUMNS.some(c => c.toLowerCase() === val.toLowerCase())) {
+                                        NON_BENEFIT_COLUMNS.push(val);
+                                    }
+                                }
+                                if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
+                                    systemConfig.driveFolderId = extra;
+                                }
+                            });
+                        }
+                        SHEET_TABS = configuredTabs.length > 0 ? configuredTabs : [...DEFAULT_SHEET_TABS];
+                    } catch (e) {
+                        console.warn("Sheet Config belum dapat diproses:", e);
+                        SHEET_TABS = [...DEFAULT_SHEET_TABS];
+                    }
+                    loadConfiguredProductSheets();
+                };
+
+                const cfgScript = document.createElement('script');
+                cfgScript.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=Config&headers=1&tqx=responseHandler:prosesDataConfig&t=${Date.now()}`;
+                cfgScript.onerror = () => {
+                    if (configLoaded) return;
+                    configLoaded = true;
+                    SHEET_TABS = [...DEFAULT_SHEET_TABS];
+                    loadConfiguredProductSheets();
+                };
+                document.body.appendChild(cfgScript);
             };
 
-            // 2. Muat Config Sheet terlebih dahulu (Dinamis: Daftar Sheet/Tab, Kolom Non-Benefit & Folder Drive)
-            let configLoaded = false;
-            window.prosesDataConfig = function (jsonData) {
-                if (configLoaded) return;
-                configLoaded = true;
-                try {
-                    const configuredTabs = [];
-                    if (jsonData && jsonData.table && jsonData.table.rows) {
-                        jsonData.table.rows.forEach(r => {
-                            if (!r || !r.c) return;
-                            const type = String((r.c[0] && r.c[0].v) || "").trim().toLowerCase();
-                            const val = String((r.c[1] && r.c[1].v) || "").trim();
-                            const extra = String((r.c[2] && r.c[2].v) || "").trim();
+            // 2. Muat Seluruh Data Produk & Konfigurasi Aman Langsung via Apps Script
+            // (Memungkinkan Google Spreadsheet dikunci 'Restricted / Private' tanpa akses publik /gviz/tq)
+            fetch(`${APPS_SCRIPT_URL}?action=get_all_product_data&t=${Date.now()}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (!data || data.status !== "success" || !Array.isArray(data.sheets)) {
+                        throw new Error("Endpoint get_all_product_data belum aktif di Apps Script");
+                    }
 
-                            if ((type === "sheet" || type === "tab" || type === "kategori" || type === "category") && val) {
-                                const lowerVal = val.toLowerCase();
-                                if (lowerVal !== "config" && lowerVal !== "documents" && !configuredTabs.some(t => t.toLowerCase() === lowerVal)) {
-                                    configuredTabs.push(val);
-                                }
-                            }
-                            if (type === "non-benefit" && val) {
-                                if (!NON_BENEFIT_COLUMNS.some(c => c.toLowerCase() === val.toLowerCase())) {
+                    if (data.config) {
+                        if (Array.isArray(data.config.tabs) && data.config.tabs.length > 0) {
+                            SHEET_TABS = data.config.tabs.filter(t => {
+                                const lw = String(t || "").trim().toLowerCase();
+                                return lw && lw !== "config" && lw !== "documents" && lw !== "users";
+                            });
+                        } else {
+                            SHEET_TABS = [...DEFAULT_SHEET_TABS];
+                        }
+
+                        if (Array.isArray(data.config.nonBenefitColumns)) {
+                            data.config.nonBenefitColumns.forEach(val => {
+                                if (val && !NON_BENEFIT_COLUMNS.some(c => c.toLowerCase() === val.toLowerCase())) {
                                     NON_BENEFIT_COLUMNS.push(val);
                                 }
-                            }
-                            if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
-                                systemConfig.driveFolderId = extra;
-                            }
-                        });
+                            });
+                        }
+
+                        if (data.config.driveFolderId) {
+                            systemConfig.driveFolderId = data.config.driveFolderId;
+                        }
+                    } else {
+                        SHEET_TABS = [...DEFAULT_SHEET_TABS];
                     }
-                    SHEET_TABS = configuredTabs.length > 0 ? configuredTabs : [...DEFAULT_SHEET_TABS];
-                } catch (e) {
-                    console.warn("Sheet Config belum dapat diproses:", e);
-                    SHEET_TABS = [...DEFAULT_SHEET_TABS];
+
+                    syncSheetTabSelectors();
+
+                    data.sheets.forEach(sheetItem => {
+                        const tabName = sheetItem.sheetName;
+                        const headers = Array.isArray(sheetItem.headers) ? sheetItem.headers : [];
+                        const rows = Array.isArray(sheetItem.rows) ? sheetItem.rows : [];
+
+                        if (!sheetItem.exists || headers.length === 0) {
+                            sheetHasHeaders[tabName] = false;
+                            sheetColumnsMap[tabName] = [];
+                            checkAllSheetsLoaded();
+                            return;
+                        }
+
+                        const gvizCompatibleData = {
+                            table: {
+                                cols: headers.map(h => ({ label: String(h || "").trim() })),
+                                rows: rows.map(r => ({
+                                    c: (Array.isArray(r) ? r : []).map(cellVal => ({ v: cellVal }))
+                                }))
+                            }
+                        };
+
+                        processSheetData(gvizCompatibleData, tabName);
+                        checkAllSheetsLoaded();
+                    });
+                })
+                .catch(err => {
+                    console.warn("Memakai fallback /gviz/tq karena get_all_product_data belum merespons:", err);
+                    loadViaLegacyGviz();
+                });
+        }
+
+        // ====================================================
+        // SISTEM AUTENTIKASI (SIGN IN, SIGN UP, & FORGOT PASSWORD OTP)
+        // ====================================================
+        const AUTH_STORAGE_KEY = "idcm_auth_session_v1";
+
+        function getActiveAuthSession() {
+            try {
+                const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                if (!parsed || !parsed.username || !parsed.expiresAt) return null;
+                if (Date.now() > Number(parsed.expiresAt)) {
+                    localStorage.removeItem(AUTH_STORAGE_KEY);
+                    sessionStorage.removeItem(AUTH_STORAGE_KEY);
+                    return null;
                 }
-                loadConfiguredProductSheets();
+                return parsed;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function saveAuthSession(userObj, rememberMe = true) {
+            const durationMs = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
+            const sessionData = {
+                username: userObj.username,
+                email: userObj.email || "",
+                loginAt: Date.now(),
+                expiresAt: Date.now() + durationMs
             };
-            const cfgScript = document.createElement('script');
-            cfgScript.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=Config&headers=1&tqx=responseHandler:prosesDataConfig&t=${Date.now()}`;
-            cfgScript.onerror = () => {
-                if (configLoaded) return;
-                configLoaded = true;
-                console.warn("Sheet Config tidak ditemukan, menggunakan daftar tab default.");
-                SHEET_TABS = [...DEFAULT_SHEET_TABS];
-                loadConfiguredProductSheets();
-            };
-            document.body.appendChild(cfgScript);
+            if (rememberMe) {
+                localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+                sessionStorage.removeItem(AUTH_STORAGE_KEY);
+            } else {
+                sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+                localStorage.removeItem(AUTH_STORAGE_KEY);
+            }
+            return sessionData;
+        }
+
+        function showAuthAlert(message, type = "error") {
+            const box = document.getElementById("authAlertBox");
+            if (!box) return;
+            if (!message) {
+                box.className = "hidden mx-5 mt-4 p-3 rounded-xl text-xs font-medium border";
+                box.innerHTML = "";
+                return;
+            }
+            if (type === "success") {
+                box.className = "mx-5 mt-4 p-3 rounded-xl text-xs font-medium border bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 border-emerald-200 dark:border-emerald-800 flex items-start gap-2";
+                box.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 dark:text-emerald-400 mt-0.5"></i><span>${message}</span>`;
+            } else if (type === "info") {
+                box.className = "mx-5 mt-4 p-3 rounded-xl text-xs font-medium border bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-200 border-blue-200 dark:border-blue-800 flex items-start gap-2";
+                box.innerHTML = `<i class="fa-solid fa-circle-info text-blue-600 dark:text-blue-400 mt-0.5"></i><span>${message}</span>`;
+            } else {
+                box.className = "mx-5 mt-4 p-3 rounded-xl text-xs font-medium border bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-200 border-red-200 dark:border-red-800 flex items-start gap-2";
+                box.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-600 dark:text-red-400 mt-0.5"></i><span>${message}</span>`;
+            }
+        }
+
+        function switchAuthTab(mode) {
+            showAuthAlert("");
+            const tabSwitcher = document.getElementById("authTabSwitcher");
+            const btnIn = document.getElementById("tabBtnAuthSignIn");
+            const btnUp = document.getElementById("tabBtnAuthSignUp");
+            const viewIn = document.getElementById("authViewSignIn");
+            const viewUp = document.getElementById("authViewSignUp");
+            const viewForgot = document.getElementById("authViewForgot");
+
+            const activeBtnClass = "py-2 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-sm";
+            const inactiveBtnClass = "py-2 text-xs font-bold rounded-lg transition text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200";
+
+            if (mode === "signup") {
+                if (tabSwitcher) tabSwitcher.classList.remove("hidden");
+                if (btnIn) btnIn.className = inactiveBtnClass;
+                if (btnUp) btnUp.className = activeBtnClass;
+                if (viewIn) viewIn.classList.add("hidden");
+                if (viewUp) viewUp.classList.remove("hidden");
+                if (viewForgot) viewForgot.classList.add("hidden");
+            } else if (mode === "forgot") {
+                if (tabSwitcher) tabSwitcher.classList.add("hidden");
+                if (viewIn) viewIn.classList.add("hidden");
+                if (viewUp) viewUp.classList.add("hidden");
+                if (viewForgot) viewForgot.classList.remove("hidden");
+                const step2 = document.getElementById("authForgotStep2");
+                if (step2) step2.classList.add("hidden");
+            } else {
+                if (tabSwitcher) tabSwitcher.classList.remove("hidden");
+                if (btnIn) btnIn.className = activeBtnClass;
+                if (btnUp) btnUp.className = inactiveBtnClass;
+                if (viewIn) viewIn.classList.remove("hidden");
+                if (viewUp) viewUp.classList.add("hidden");
+                if (viewForgot) viewForgot.classList.add("hidden");
+            }
+        }
+
+        function toggleAuthPasswordVisibility(inputId, btnEl) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+            const isPwd = input.type === "password";
+            input.type = isPwd ? "text" : "password";
+            if (btnEl) {
+                btnEl.innerHTML = isPwd ? `<i class="fa-solid fa-eye-slash"></i>` : `<i class="fa-solid fa-eye"></i>`;
+            }
+        }
+
+        function unlockAppWithSession(session) {
+            const overlay = document.getElementById("authGateOverlay");
+            if (overlay) overlay.classList.add("hidden");
+
+            const navContainer = document.getElementById("navUserContainer");
+            const navLabel = document.getElementById("navUsernameLabel");
+            if (navContainer && navLabel) {
+                navLabel.textContent = session.username;
+                navLabel.title = session.email ? `${session.username} (${session.email})` : session.username;
+                navContainer.classList.remove("hidden");
+                navContainer.classList.add("flex");
+            }
+
+            updateStickyFilterPosition();
+            if (products.length === 0) {
+                fetchAllSheetData();
+            }
+        }
+
+        function handleLogout() {
+            if (!confirm("Apakah Anda yakin ingin keluar (Sign Out) dari sesi ini?")) return;
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+            sessionStorage.removeItem(AUTH_STORAGE_KEY);
+
+            const navContainer = document.getElementById("navUserContainer");
+            if (navContainer) {
+                navContainer.classList.add("hidden");
+                navContainer.classList.remove("flex");
+            }
+
+            const pwdIn = document.getElementById("authSignInPassword");
+            if (pwdIn) pwdIn.value = "";
+            switchAuthTab("signin");
+
+            const overlay = document.getElementById("authGateOverlay");
+            if (overlay) overlay.classList.remove("hidden");
+        }
+
+        async function handleSignInSubmit(e) {
+            e.preventDefault();
+            showAuthAlert("");
+
+            const identifier = document.getElementById("authSignInIdentifier").value.trim();
+            const password = document.getElementById("authSignInPassword").value;
+            const rememberMe = document.getElementById("authRememberMe").checked;
+            const btn = document.getElementById("btnSubmitSignIn");
+            const origHtml = btn.innerHTML;
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Memverifikasi Akun...`;
+
+            try {
+                const resp = await fetch(APPS_SCRIPT_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "text/plain;charset=utf-8" },
+                    body: JSON.stringify({
+                        action: "auth_signin",
+                        identifier,
+                        password
+                    })
+                });
+                const res = await resp.json();
+                if (!res || res.status !== "success" || !res.user) {
+                    throw new Error((res && res.message) || "Gagal Sign In. Periksa kembali Username/Email dan Password.");
+                }
+
+                const session = saveAuthSession(res.user, rememberMe);
+                unlockAppWithSession(session);
+            } catch (err) {
+                showAuthAlert(err.message || "Gagal terhubung ke server autentikasi.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+            }
+        }
+
+        async function handleSignUpSubmit(e) {
+            e.preventDefault();
+            showAuthAlert("");
+
+            const username = document.getElementById("authSignUpUsername").value.trim();
+            const email = document.getElementById("authSignUpEmail").value.trim();
+            const password = document.getElementById("authSignUpPassword").value;
+            const confirmPwd = document.getElementById("authSignUpConfirm").value;
+            const inviteCode = document.getElementById("authSignUpInviteCode").value.trim();
+            const btn = document.getElementById("btnSubmitSignUp");
+            const origHtml = btn.innerHTML;
+
+            if (password !== confirmPwd) {
+                showAuthAlert("Konfirmasi password tidak cocok dengan password yang diketik.", "error");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Mendaftarkan Akun...`;
+
+            try {
+                const resp = await fetch(APPS_SCRIPT_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "text/plain;charset=utf-8" },
+                    body: JSON.stringify({
+                        action: "auth_signup",
+                        username,
+                        email,
+                        password,
+                        inviteCode
+                    })
+                });
+                const res = await resp.json();
+                if (!res || res.status !== "success" || !res.user) {
+                    throw new Error((res && res.message) || "Gagal mendaftarkan akun baru.");
+                }
+
+                const session = saveAuthSession(res.user, true);
+                unlockAppWithSession(session);
+            } catch (err) {
+                showAuthAlert(err.message || "Gagal terhubung ke server pendaftaran.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+            }
+        }
+
+        async function handleForgotRequestOtp(e) {
+            e.preventDefault();
+            showAuthAlert("");
+
+            const identifier = document.getElementById("authForgotIdentifier").value.trim();
+            const btn = document.getElementById("btnRequestOtp");
+            const origHtml = btn.innerHTML;
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Mengirim Kode OTP ke Email...`;
+
+            try {
+                const resp = await fetch(APPS_SCRIPT_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "text/plain;charset=utf-8" },
+                    body: JSON.stringify({
+                        action: "auth_request_otp",
+                        identifier
+                    })
+                });
+                const res = await resp.json();
+                if (!res || res.status !== "success") {
+                    throw new Error((res && res.message) || "Gagal mengirim kode OTP.");
+                }
+
+                showAuthAlert(res.message || "Kode OTP 6 digit telah dikirim ke email Anda.", "success");
+                document.getElementById("authForgotStep2").classList.remove("hidden");
+                document.getElementById("authForgotOtpCode").focus();
+            } catch (err) {
+                showAuthAlert(err.message || "Gagal mengirim OTP.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+            }
+        }
+
+        async function handleForgotResetPassword(e) {
+            e.preventDefault();
+            showAuthAlert("");
+
+            const identifier = document.getElementById("authForgotIdentifier").value.trim();
+            const otp = document.getElementById("authForgotOtpCode").value.trim();
+            const newPassword = document.getElementById("authForgotNewPassword").value;
+            const confirmPassword = document.getElementById("authForgotConfirmPassword").value;
+            const btn = document.getElementById("btnResetPasswordSubmit");
+            const origHtml = btn.innerHTML;
+
+            if (newPassword !== confirmPassword) {
+                showAuthAlert("Konfirmasi password baru tidak sama.", "error");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan Password Baru...`;
+
+            try {
+                const resp = await fetch(APPS_SCRIPT_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "text/plain;charset=utf-8" },
+                    body: JSON.stringify({
+                        action: "auth_reset_password",
+                        identifier,
+                        otp,
+                        newPassword
+                    })
+                });
+                const res = await resp.json();
+                if (!res || res.status !== "success") {
+                    throw new Error((res && res.message) || "Gagal mereset password.");
+                }
+
+                switchAuthTab("signin");
+                document.getElementById("authSignInIdentifier").value = (res.user && res.user.username) ? res.user.username : identifier;
+                showAuthAlert("Password berhasil diperbarui! Silakan Sign In dengan password baru Anda.", "success");
+            } catch (err) {
+                showAuthAlert(err.message || "Gagal mereset password.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+            }
         }
 
         document.addEventListener("DOMContentLoaded", () => {
             updateThemeUI();
             updateStickyFilterPosition();
-            fetchAllSheetData();
+            const existingSession = getActiveAuthSession();
+            if (existingSession) {
+                unlockAppWithSession(existingSession);
+            }
         });
 
         function processSheetData(jsonData, categoryName) {
@@ -2812,6 +3767,7 @@
 
             currentlyVisibleProducts = sortProducts(currentlyVisibleProducts);
             renderDeck(currentlyVisibleProducts);
+            updateCompareBar();
         }
 
         function toggleSelectProduct(id, e) {
@@ -2826,11 +3782,19 @@
         }
 
         function selectAllVisible() {
-            currentlyVisibleProducts.forEach(p => {
-                if (!selectedProductIds.includes(p.id)) {
-                    selectedProductIds.push(p.id);
-                }
-            });
+            if (!currentlyVisibleProducts || currentlyVisibleProducts.length === 0) return;
+
+            const allVisibleSelected = currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
+            if (allVisibleSelected) {
+                const visibleSet = new Set(currentlyVisibleProducts.map(p => p.id));
+                selectedProductIds = selectedProductIds.filter(id => !visibleSet.has(id));
+            } else {
+                currentlyVisibleProducts.forEach(p => {
+                    if (!selectedProductIds.includes(p.id)) {
+                        selectedProductIds.push(p.id);
+                    }
+                });
+            }
             updateCompareBar();
             renderDeck(currentlyVisibleProducts);
         }
@@ -2843,12 +3807,96 @@
             } else {
                 bar.classList.add("translate-y-32");
             }
+
+            const btnSelectAll = document.getElementById("btnSelectAllVisible");
+            if (btnSelectAll) {
+                const allVisibleSelected = currentlyVisibleProducts.length > 0 &&
+                    currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
+                if (allVisibleSelected) {
+                    btnSelectAll.innerHTML = `<i class="fa-solid fa-xmark me-1"></i> Batal Pilih Semua`;
+                    btnSelectAll.className = "text-xs md:text-sm bg-amber-600/90 hover:bg-amber-600 px-3 py-1.5 rounded-lg transition text-white font-medium border border-amber-400/50";
+                } else {
+                    btnSelectAll.innerHTML = `<i class="fa-solid fa-check-double me-1"></i> Pilih Semua`;
+                    btnSelectAll.className = "text-xs md:text-sm bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg transition text-gray-200 font-medium border border-gray-600";
+                }
+            }
         }
 
         function clearSelection() {
             selectedProductIds = [];
             updateCompareBar();
             renderDeck(currentlyVisibleProducts);
+        }
+
+        let isCompareModalEnlarged = false;
+        let currentCompareTableZoom = 1;
+
+        function toggleEnlargeCompareModal() {
+            const modal = document.getElementById("compareModal");
+            const dialog = document.getElementById("compareModalDialog");
+            const btn = document.getElementById("btnEnlargeCompareModal");
+            if (!modal || !dialog) return;
+
+            isCompareModalEnlarged = !isCompareModalEnlarged;
+            if (isCompareModalEnlarged) {
+                modal.classList.remove("p-4", "md:p-6");
+                modal.classList.add("p-0");
+                dialog.classList.remove("max-w-7xl", "max-h-[90vh]", "rounded-2xl");
+                dialog.classList.add("w-screen", "h-screen", "max-w-none", "max-h-screen", "rounded-none");
+                if (btn) {
+                    btn.innerHTML = `<i class="fa-solid fa-compress"></i> <span class="hidden lg:inline">Perkecil</span>`;
+                    btn.title = "Kembalikan Ukuran Normal";
+                }
+            } else {
+                modal.classList.remove("p-0");
+                modal.classList.add("p-4", "md:p-6");
+                dialog.classList.remove("w-screen", "h-screen", "max-w-none", "max-h-screen", "rounded-none");
+                dialog.classList.add("max-w-7xl", "max-h-[90vh]", "rounded-2xl");
+                if (btn) {
+                    btn.innerHTML = `<i class="fa-solid fa-expand"></i> <span class="hidden lg:inline">Enlarge</span>`;
+                    btn.title = "Perbesar / Kecilkan Layar Tabel Perbandingan";
+                }
+            }
+        }
+
+        function applyCompareTableZoom(scale) {
+            const table = document.getElementById("comparisonTable");
+            const zoomInput = document.getElementById("inputCompareTableZoom");
+            const clamped = Math.min(2.5, Math.max(0.4, Math.round(scale * 100) / 100));
+            currentCompareTableZoom = clamped;
+
+            if (table) {
+                table.style.zoom = String(clamped);
+            }
+            if (zoomInput) {
+                zoomInput.value = Math.round(clamped * 100);
+            }
+        }
+
+        function adjustCompareTableZoom(delta) {
+            applyCompareTableZoom(currentCompareTableZoom + delta);
+        }
+
+        function handleCompareTableZoomInput(inputEl) {
+            if (!inputEl) return;
+            let rawVal = parseFloat(inputEl.value);
+            if (isNaN(rawVal)) {
+                inputEl.value = Math.round(currentCompareTableZoom * 100);
+                return;
+            }
+            const clampedPercent = Math.min(250, Math.max(40, rawVal));
+            applyCompareTableZoom(clampedPercent / 100);
+        }
+
+        function resetCompareTableZoom() {
+            applyCompareTableZoom(1);
+        }
+
+        function handleCompareTableWheel(event) {
+            if (!event.ctrlKey) return;
+            event.preventDefault();
+            const delta = event.deltaY < 0 ? 0.1 : -0.1;
+            adjustCompareTableZoom(delta);
         }
 
         function escapeHtml(str) {
@@ -3052,10 +4100,15 @@
 
                 return `
                                 <tr>
-                                    <td class="p-3 ${rowBgClass}">${feat.label}</td>
+                                    <td class="p-3 align-middle ${rowBgClass}">${feat.label}</td>
                                     ${currentComparisonProducts.map(p => {
                     let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
-                    return `<td class="p-3 border-l dark:border-gray-700 ${cellBgClass}">${formatListText(val)}</td>`;
+                    const renderedVal = formatListText(val);
+                    const isDashEmpty = isEmptyVal(val) || renderedVal === "-";
+                    const alignClass = isDashEmpty
+                        ? "text-center align-middle font-semibold text-gray-400 dark:text-gray-500"
+                        : "align-middle";
+                    return `<td class="p-3 border-l dark:border-gray-700 ${cellBgClass} ${alignClass}">${renderedVal}</td>`;
                 }).join('')}
                                 </tr>
                             `;
@@ -3063,6 +4116,7 @@
                     </tbody>
                 </table>
             `;
+            applyCompareTableZoom(currentCompareTableZoom);
             document.getElementById("compareModal").classList.remove("hidden");
         }
 
@@ -3070,134 +4124,433 @@
             document.getElementById("compareModal").classList.add("hidden");
         }
 
-        function downloadComparisonExcel() {
-            if (currentComparisonProducts.length === 0) return;
-            let ws_data = [];
-
-            // Baris 1: Nama Perusahaan
-            let companyRow = ["Nama Perusahaan"];
-            currentComparisonProducts.forEach(p => companyRow.push(p.company || "-"));
-            ws_data.push(companyRow);
-
-            // Baris 2: Nama Produk
-            let productRow = ["Nama Produk"];
-            currentComparisonProducts.forEach(p => productRow.push(p.name || "-"));
-            ws_data.push(productRow);
-
-            currentComparisonFeatures.forEach(feat => {
-                if (feat.isSectionHeader) {
-                    // Baris pemisah "Manfaat Produk" di bagian kiri, kolom produk dikosongkan
-                    let sectionRow = [feat.label, ...currentComparisonProducts.map(() => "")];
-                    ws_data.push(sectionRow);
-                    return;
+        async function resolveImageForExcelExport(rawImgSrc) {
+            if (!rawImgSrc) return null;
+            try {
+                let src = String(rawImgSrc).trim();
+                if (src.startsWith("drive:")) {
+                    const fileId = src.slice(6);
+                    src = driveImageCache[fileId] || await fetchDriveImageDataUrl(fileId);
+                    if (!src) return null;
                 }
 
-                let rowData = [feat.label];
-                currentComparisonProducts.forEach(p => {
-                    let cellVal = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
-                    cellVal = stripImageTokensForExcel(cellVal);
-                    cellVal = String(cellVal).replace(/\r\n|\r|\n/g, '\n');
-                    rowData.push(cellVal);
-                });
-                ws_data.push(rowData);
-            });
-
-            const ws = XLSX.utils.aoa_to_sheet(ws_data);
-
-            // 1. Atur Lebar Kolom (Column Widths) menyerupai proporsi tabel di Web
-            // Kolom A ~ 26 karakter (~190px), Kolom Produk ~ 36 karakter (~255px)
-            const FIRST_COL_WCH = 26;
-            const PROD_COL_WCH = 36;
-            ws['!cols'] = [
-                { wch: FIRST_COL_WCH, wpx: 190 },
-                ...currentComparisonProducts.map(() => ({ wch: PROD_COL_WCH, wpx: 255 }))
-            ];
-
-            // 2. Hitung Tinggi Baris (Row Heights) secara proporsional berdasarkan jumlah baris teks setelah Wrap Text
-            ws['!rows'] = ws_data.map((row, rIdx) => {
-                const featObj = rIdx >= 2 ? currentComparisonFeatures[rIdx - 2] : null;
-                if (featObj && featObj.isSectionHeader) {
-                    return { hpt: 28, hpx: 37 };
-                }
-
-                let maxWrappedLines = 1;
-                row.forEach((cellText, cIdx) => {
-                    const str = String(cellText || "");
-                    if (!str) return;
-                    const effectiveCharLimit = (cIdx === 0) ? (FIRST_COL_WCH - 3) : (PROD_COL_WCH - 3);
-                    const paragraphs = str.split('\n');
-                    let totalLines = 0;
-                    paragraphs.forEach(line => {
-                        totalLines += Math.max(1, Math.ceil(line.length / effectiveCharLimit));
-                    });
-                    if (totalLines > maxWrappedLines) {
-                        maxWrappedLines = totalLines;
-                    }
+                const img = await new Promise((resolve, reject) => {
+                    const el = new Image();
+                    el.crossOrigin = "anonymous";
+                    el.onload = () => resolve(el);
+                    el.onerror = (e) => reject(e);
+                    el.src = src;
                 });
 
-                if (rIdx === 0) {
-                    return { hpt: 26, hpx: 34 };
+                const nw = img.naturalWidth || img.width || 240;
+                const nh = img.naturalHeight || img.height || 160;
+                const canvas = document.createElement("canvas");
+                canvas.width = nw;
+                canvas.height = nh;
+                const ctx = canvas.getContext("2d");
+                ctx.fillStyle = "#FFFFFF";
+                ctx.fillRect(0, 0, nw, nh);
+                ctx.drawImage(img, 0, 0, nw, nh);
+
+                const pngDataUrl = canvas.toDataURL("image/png");
+                const b64 = pngDataUrl.split(",")[1];
+                if (!b64) return null;
+
+                const binStr = atob(b64);
+                const bytes = new Uint8Array(binStr.length);
+                for (let i = 0; i < binStr.length; i++) {
+                    bytes[i] = binStr.charCodeAt(i);
                 }
-                if (rIdx === 1) {
-                    const prodHpt = Math.max(30, maxWrappedLines * 16 + 10);
-                    return { hpt: prodHpt, hpx: Math.round(prodHpt * 1.33) };
-                }
 
-                // Berikan ruang vertikal (padding atas-bawah) menyerupai padding p-3 di tabel web
-                const rowHpt = (maxWrappedLines === 1)
-                    ? 28
-                    : Math.max(36, maxWrappedLines * 15.5 + 14);
-                return { hpt: rowHpt, hpx: Math.round(rowHpt * 1.33) };
-            });
+                return {
+                    pngBytes: bytes,
+                    width: nw,
+                    height: nh
+                };
+            } catch (err) {
+                console.warn("Gagal menyiapkan gambar untuk ekspor Excel:", err);
+                return null;
+            }
+        }
 
-            // 3. Terapkan Wrap Text, Alignment (Vertical Center & Left), dan Font Bold pada Header / Label (tanpa warna)
-            const thinBorder = {
-                top: { style: "thin", color: { rgb: "D1D5DB" } },
-                bottom: { style: "thin", color: { rgb: "D1D5DB" } },
-                left: { style: "thin", color: { rgb: "D1D5DB" } },
-                right: { style: "thin", color: { rgb: "D1D5DB" } }
-            };
-
-            const totalCols = companyRow.length;
-            for (let r = 0; r < ws_data.length; r++) {
-                const featObj = r >= 2 ? currentComparisonFeatures[r - 2] : null;
-                const isSectionRow = Boolean(featObj && featObj.isSectionHeader);
-                const isHeaderRow = (r === 0 || r === 1);
-
-                for (let c = 0; c < totalCols; c++) {
-                    const cellRef = XLSX.utils.encode_cell({ r, c });
-                    if (!ws[cellRef]) {
-                        ws[cellRef] = { t: 's', v: '' };
-                    }
-
-                    const isBold = isHeaderRow || (c === 0) || isSectionRow;
-                    ws[cellRef].s = {
-                        font: {
-                            name: "Calibri",
-                            sz: (r === 1 && c > 0) ? 11 : 10,
-                            bold: isBold
-                        },
-                        alignment: {
-                            wrapText: true,
-                            vertical: "center",
-                            horizontal: "left"
-                        },
-                        border: thinBorder
-                    };
-                }
+        async function injectImagesIntoXlsxBuffer(xlsxArrayBuffer, excelDrawings) {
+            if (!excelDrawings || excelDrawings.length === 0 || typeof JSZip === "undefined") {
+                return xlsxArrayBuffer;
             }
 
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Komparasi");
+            const zip = await JSZip.loadAsync(xlsxArrayBuffer);
+            const EMU_PER_PX = 9525;
 
-            const today = new Date().toISOString().split('T')[0];
-            const fileName = `Komparasi_Asuransi_${today}.xlsx`;
+            let drawingAnchorsXml = "";
+            let drawingRelsXml = "";
 
-            if (window.pywebview) {
-                const b64Data = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
-                window.pywebview.api.save_excel(b64Data, fileName);
+            excelDrawings.forEach((item, idx) => {
+                const imgNum = idx + 1;
+                const rId = `rId_img_${imgNum}`;
+                zip.file(`xl/media/image${imgNum}.png`, item.pngBytes, { binary: true });
+
+                drawingRelsXml += `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${imgNum}.png"/>`;
+
+                const colOffEmu = Math.max(0, Math.round(item.colOffPx * EMU_PER_PX));
+                const rowOffEmu = Math.max(0, Math.round(item.rowOffPx * EMU_PER_PX));
+                const cxEmu = Math.max(EMU_PER_PX * 16, Math.round(item.widthPx * EMU_PER_PX));
+                const cyEmu = Math.max(EMU_PER_PX * 16, Math.round(item.heightPx * EMU_PER_PX));
+
+                drawingAnchorsXml += `
+                    <xdr:oneCellAnchor>
+                        <xdr:from>
+                            <xdr:col>${item.col}</xdr:col>
+                            <xdr:colOff>${colOffEmu}</xdr:colOff>
+                            <xdr:row>${item.row}</xdr:row>
+                            <xdr:rowOff>${rowOffEmu}</xdr:rowOff>
+                        </xdr:from>
+                        <xdr:ext cx="${cxEmu}" cy="${cyEmu}"/>
+                        <xdr:pic>
+                            <xdr:nvPicPr>
+                                <xdr:cNvPr id="${imgNum + 10}" name="TableImage_${imgNum}"/>
+                                <xdr:cNvPicPr>
+                                    <a:picLocks noChangeAspect="1"/>
+                                </xdr:cNvPicPr>
+                            </xdr:nvPicPr>
+                            <xdr:blipFill>
+                                <a:blip r:embed="${rId}"/>
+                                <a:stretch><a:fillRect/></a:stretch>
+                            </xdr:blipFill>
+                            <xdr:spPr>
+                                <a:xfrm>
+                                    <a:off x="0" y="0"/>
+                                    <a:ext cx="${cxEmu}" cy="${cyEmu}"/>
+                                </a:xfrm>
+                                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                            </xdr:spPr>
+                        </xdr:pic>
+                        <xdr:clientData/>
+                    </xdr:oneCellAnchor>
+                `.trim();
+            });
+
+            const drawingXmlContent = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+                `<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+                drawingAnchorsXml +
+                `</xdr:wsDr>`;
+            zip.file("xl/drawings/drawing1.xml", drawingXmlContent);
+
+            const drawingRelsContent = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+                `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+                drawingRelsXml +
+                `</Relationships>`;
+            zip.file("xl/drawings/_rels/drawing1.xml.rels", drawingRelsContent);
+
+            const sheetRelsPath = "xl/worksheets/_rels/sheet1.xml.rels";
+            let sheetRelsXml = "";
+            if (zip.file(sheetRelsPath)) {
+                sheetRelsXml = await zip.file(sheetRelsPath).async("string");
+                if (!sheetRelsXml.includes("drawings/drawing1.xml")) {
+                    sheetRelsXml = sheetRelsXml.replace(
+                        "</Relationships>",
+                        `<Relationship Id="rId_drawing1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>`
+                    );
+                }
             } else {
-                XLSX.writeFile(wb, fileName);
+                sheetRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+                    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+                    `<Relationship Id="rId_drawing1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>` +
+                    `</Relationships>`;
+            }
+            zip.file(sheetRelsPath, sheetRelsXml);
+
+            const sheetPath = "xl/worksheets/sheet1.xml";
+            if (zip.file(sheetPath)) {
+                let sheetXml = await zip.file(sheetPath).async("string");
+                if (!sheetXml.includes('xmlns:r=')) {
+                    sheetXml = sheetXml.replace(
+                        '<worksheet ',
+                        '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+                    );
+                }
+                if (!sheetXml.includes('<drawing ')) {
+                    if (sheetXml.includes('<legacyDrawing')) {
+                        sheetXml = sheetXml.replace('<legacyDrawing', '<drawing r:id="rId_drawing1"/><legacyDrawing');
+                    } else if (sheetXml.includes('<extLst')) {
+                        sheetXml = sheetXml.replace('<extLst', '<drawing r:id="rId_drawing1"/><extLst');
+                    } else {
+                        sheetXml = sheetXml.replace('</worksheet>', '<drawing r:id="rId_drawing1"/></worksheet>');
+                    }
+                }
+                zip.file(sheetPath, sheetXml);
+            }
+
+            const contentTypesPath = "[Content_Types].xml";
+            if (zip.file(contentTypesPath)) {
+                let ctXml = await zip.file(contentTypesPath).async("string");
+                if (!/Extension="png"/i.test(ctXml)) {
+                    ctXml = ctXml.replace(/<Types[^>]*>/, match => `${match}<Default Extension="png" ContentType="image/png"/>`);
+                }
+                if (!ctXml.includes('/xl/drawings/drawing1.xml')) {
+                    ctXml = ctXml.replace(
+                        '</Types>',
+                        `<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`
+                    );
+                }
+                zip.file(contentTypesPath, ctXml);
+            }
+
+            return await zip.generateAsync({ type: "uint8array" });
+        }
+
+        async function downloadComparisonExcel(btnEl = null) {
+            if (currentComparisonProducts.length === 0) return;
+
+            const exportBtn = btnEl || document.getElementById("btnExportComparisonExcel");
+            const origBtnHtml = exportBtn ? exportBtn.innerHTML : "";
+            if (exportBtn) {
+                exportBtn.disabled = true;
+                exportBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyiapkan Excel...`;
+            }
+
+            try {
+                let ws_data = [];
+                const FIRST_COL_WCH = 26;
+                const PROD_COL_WCH = 38;
+                const PROD_COL_WPX = 270;
+                const MAX_IMG_DISPLAY_W = 248;
+
+                // Baris 1: Nama Perusahaan
+                let companyRow = ["Nama Perusahaan"];
+                currentComparisonProducts.forEach(p => companyRow.push(p.company || "-"));
+                ws_data.push(companyRow);
+
+                // Baris 2: Nama Produk
+                let productRow = ["Nama Produk"];
+                currentComparisonProducts.forEach(p => productRow.push(p.name || "-"));
+                ws_data.push(productRow);
+
+                const excelDrawings = [];
+                const cellRequiredHeightPx = {};
+                const cellHasEmbeddedImages = {};
+
+                for (let fIdx = 0; fIdx < currentComparisonFeatures.length; fIdx++) {
+                    const feat = currentComparisonFeatures[fIdx];
+                    const rIdx = ws_data.length;
+
+                    if (feat.isSectionHeader) {
+                        let sectionRow = [feat.label, ...currentComparisonProducts.map(() => "")];
+                        ws_data.push(sectionRow);
+                        continue;
+                    }
+
+                    let rowData = [feat.label];
+                    cellRequiredHeightPx[rIdx] = [];
+
+                    for (let pIdx = 0; pIdx < currentComparisonProducts.length; pIdx++) {
+                        const p = currentComparisonProducts[pIdx];
+                        const cIdx = pIdx + 1;
+                        let rawCellVal = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
+                        const { text, images } = splitTextAndImages(rawCellVal);
+
+                        let cleanText = text ? String(text).replace(/\r\n|\r|\n/g, '\n').trim() : "";
+
+                        if (!images || images.length === 0) {
+                            const fallbackVal = cleanText || sanitizeValue(rawCellVal);
+                            rowData.push(String(fallbackVal).replace(/\r\n|\r|\n/g, '\n'));
+                            continue;
+                        }
+
+                        const resolvedImgs = [];
+                        for (const imgSrc of images) {
+                            const resImg = await resolveImageForExcelExport(imgSrc);
+                            if (resImg) resolvedImgs.push(resImg);
+                        }
+
+                        if (resolvedImgs.length === 0) {
+                            let fallbackStr = stripImageTokensForExcel(rawCellVal);
+                            rowData.push(String(fallbackStr).replace(/\r\n|\r|\n/g, '\n'));
+                            continue;
+                        }
+
+                        // Jika gambar berhasil dimuat, tampilkan teks asli (jika ada) tanpa tulisan "[Tabel Gambar - Lihat di Web]"
+                        rowData.push(cleanText);
+                        cellHasEmbeddedImages[`${rIdx},${cIdx}`] = true;
+
+                        // Hitung tinggi ruang teks di atas gambar (jika sel memiliki teks + gambar sekaligus)
+                        let textOffsetPx = 6;
+                        if (cleanText) {
+                            const effectiveCharLimit = PROD_COL_WCH - 3;
+                            const paragraphs = cleanText.split('\n');
+                            let totalTextLines = 0;
+                            paragraphs.forEach(line => {
+                                totalTextLines += Math.max(1, Math.ceil(line.length / effectiveCharLimit));
+                            });
+                            textOffsetPx = totalTextLines * 18 + 10;
+                        }
+
+                        // Hitung ukuran tampil masing-masing gambar di dalam sel
+                        const sizedImgs = resolvedImgs.map(im => {
+                            let dispW = Math.min(MAX_IMG_DISPLAY_W, im.width);
+                            if (im.width < 150) {
+                                dispW = Math.min(MAX_IMG_DISPLAY_W, Math.round(im.width * 1.15));
+                            }
+                            let dispH = Math.max(24, Math.round(im.height * (dispW / im.width)));
+                            return { ...im, dispW, dispH };
+                        });
+
+                        // Batasi tinggi total per sel agar tidak melebihi batas tinggi maksimum 1 baris Excel (409 pt ~ 540 px)
+                        const maxAvailImgHeightPx = Math.max(85, 525 - textOffsetPx - 10);
+                        const rawTotalImgHeightPx = sizedImgs.reduce((sum, im) => sum + im.dispH, 0) + (sizedImgs.length - 1) * 6;
+                        if (rawTotalImgHeightPx > maxAvailImgHeightPx) {
+                            const scaleDown = maxAvailImgHeightPx / rawTotalImgHeightPx;
+                            sizedImgs.forEach(im => {
+                                im.dispW = Math.max(36, Math.round(im.dispW * scaleDown));
+                                im.dispH = Math.max(20, Math.round(im.dispH * scaleDown));
+                            });
+                        }
+
+                        let curY = textOffsetPx;
+                        sizedImgs.forEach(im => {
+                            const colOffPx = cleanText
+                                ? 6
+                                : Math.max(6, Math.round((PROD_COL_WPX - im.dispW) / 2));
+                            excelDrawings.push({
+                                col: cIdx,
+                                row: rIdx,
+                                colOffPx,
+                                rowOffPx: curY,
+                                widthPx: im.dispW,
+                                heightPx: im.dispH,
+                                pngBytes: im.pngBytes
+                            });
+                            curY += im.dispH + 6;
+                        });
+
+                        cellRequiredHeightPx[rIdx].push(curY + 6);
+                    }
+
+                    ws_data.push(rowData);
+                }
+
+                const ws = XLSX.utils.aoa_to_sheet(ws_data);
+
+                // 1. Atur Lebar Kolom (Column Widths) menyerupai proporsi tabel di Web
+                ws['!cols'] = [
+                    { wch: FIRST_COL_WCH, wpx: 190 },
+                    ...currentComparisonProducts.map(() => ({ wch: PROD_COL_WCH, wpx: PROD_COL_WPX }))
+                ];
+
+                // 2. Hitung Tinggi Baris (Row Heights) secara proporsional berdasarkan teks + gambar yang tertanam
+                ws['!rows'] = ws_data.map((row, rIdx) => {
+                    const featObj = rIdx >= 2 ? currentComparisonFeatures[rIdx - 2] : null;
+                    if (featObj && featObj.isSectionHeader) {
+                        return { hpt: 28, hpx: 37 };
+                    }
+
+                    let maxWrappedLines = 1;
+                    row.forEach((cellText, cIdx) => {
+                        const str = String(cellText || "");
+                        if (!str) return;
+                        const effectiveCharLimit = (cIdx === 0) ? (FIRST_COL_WCH - 3) : (PROD_COL_WCH - 3);
+                        const paragraphs = str.split('\n');
+                        let totalLines = 0;
+                        paragraphs.forEach(line => {
+                            totalLines += Math.max(1, Math.ceil(line.length / effectiveCharLimit));
+                        });
+                        if (totalLines > maxWrappedLines) {
+                            maxWrappedLines = totalLines;
+                        }
+                    });
+
+                    if (rIdx === 0) {
+                        return { hpt: 26, hpx: 34 };
+                    }
+                    if (rIdx === 1) {
+                        const prodHpt = Math.max(30, maxWrappedLines * 16 + 10);
+                        return { hpt: prodHpt, hpx: Math.round(prodHpt * 1.33) };
+                    }
+
+                    let rowHpt = (maxWrappedLines === 1)
+                        ? 28
+                        : Math.max(36, maxWrappedLines * 15.5 + 14);
+
+                    const imgHeightsPx = cellRequiredHeightPx[rIdx] || [];
+                    if (imgHeightsPx.length > 0) {
+                        const maxImgPx = Math.max(...imgHeightsPx);
+                        const imgHpt = Math.ceil(maxImgPx * 0.75) + 4;
+                        rowHpt = Math.min(409, Math.max(rowHpt, imgHpt));
+                    }
+
+                    return { hpt: rowHpt, hpx: Math.round(rowHpt * 1.33) };
+                });
+
+                // 3. Terapkan Wrap Text, Alignment, dan Border
+                const thinBorder = {
+                    top: { style: "thin", color: { rgb: "D1D5DB" } },
+                    bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+                    left: { style: "thin", color: { rgb: "D1D5DB" } },
+                    right: { style: "thin", color: { rgb: "D1D5DB" } }
+                };
+
+                const totalCols = companyRow.length;
+                for (let r = 0; r < ws_data.length; r++) {
+                    const featObj = r >= 2 ? currentComparisonFeatures[r - 2] : null;
+                    const isSectionRow = Boolean(featObj && featObj.isSectionHeader);
+                    const isHeaderRow = (r === 0 || r === 1);
+
+                    for (let c = 0; c < totalCols; c++) {
+                        const cellRef = XLSX.utils.encode_cell({ r, c });
+                        if (!ws[cellRef]) {
+                            ws[cellRef] = { t: 's', v: '' };
+                        }
+
+                        const isBold = isHeaderRow || (c === 0) || isSectionRow;
+                        const cellTextVal = String(ws[cellRef].v || "").trim();
+                        const hasImgInCell = Boolean(cellHasEmbeddedImages[`${r},${c}`]);
+                        const isCenterCell = (c > 0 && !isHeaderRow && !isSectionRow && !hasImgInCell && (cellTextVal === "-" || cellTextVal === "✓" || cellTextVal === "✅"));
+                        ws[cellRef].s = {
+                            font: {
+                                name: "Calibri",
+                                sz: (r === 1 && c > 0) ? 11 : 10,
+                                bold: isBold
+                            },
+                            alignment: {
+                                wrapText: true,
+                                vertical: (hasImgInCell && cellTextVal) ? "top" : "center",
+                                horizontal: isCenterCell ? "center" : "left"
+                            },
+                            border: thinBorder
+                        };
+                    }
+                }
+
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Komparasi");
+
+                const today = new Date().toISOString().split('T')[0];
+                const fileName = `Komparasi_Asuransi_${today}.xlsx`;
+
+                const rawXlsxArray = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+                const finalXlsxBytes = await injectImagesIntoXlsxBuffer(rawXlsxArray, excelDrawings);
+
+                if (window.pywebview) {
+                    let binary = "";
+                    const bytes = new Uint8Array(finalXlsxBytes);
+                    for (let i = 0; i < bytes.byteLength; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                    }
+                    const b64Data = btoa(binary);
+                    window.pywebview.api.save_excel(b64Data, fileName);
+                } else {
+                    const outBlob = new Blob([finalXlsxBytes], {
+                        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    });
+                    triggerBlobDownload(outBlob, fileName);
+                }
+            } catch (err) {
+                console.error("Gagal mengekspor Excel perbandingan:", err);
+                alert("Terjadi kesalahan saat mengekspor file Excel: " + err.message);
+            } finally {
+                if (exportBtn) {
+                    exportBtn.disabled = false;
+                    exportBtn.innerHTML = origBtnHtml;
+                }
             }
         }
 
@@ -3643,11 +4996,9 @@
                                             <button type="button" onclick="previewDocumentInline('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', '${(doc.docType || 'Dokumen').replace(/'/g, "\\'")}', '${doc.downloadUrl || ''}')" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition flex items-center gap-1" title="Lihat Dokumen Langsung di Web">
                                                 <i class="fa-solid fa-eye text-[10px]"></i> Lihat
                                             </button>
-                                            ${doc.downloadUrl ? `
-                                                <a href="${doc.downloadUrl}" target="_blank" download class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 transition flex items-center gap-1" title="Download File">
-                                                    <i class="fa-solid fa-download text-[10px]"></i> Unduh
-                                                </a>
-                                            ` : ''}
+                                            <button type="button" onclick="downloadDocumentDirect('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', this, '${doc.downloadUrl || ''}')" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 disabled:opacity-60 transition flex items-center gap-1" title="Unduh File Langsung Tanpa Tab Google Drive">
+                                                <i class="fa-solid fa-download text-[10px]"></i> <span>Unduh</span>
+                                            </button>
                                             <button type="button" onclick="deleteSingleProductDoc('${doc.fileId}', '${safeName}')" class="w-7 h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Hapus Dokumen">
                                                 <i class="fa-solid fa-trash-can text-xs"></i>
                                             </button>
