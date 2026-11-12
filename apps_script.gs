@@ -52,7 +52,7 @@ function getOrCreateRootDocFolder() {
 // (Memungkinkan Google Spreadsheet dikunci 'Restricted / Private' tanpa perlu dibuka ke publik via /gviz/tq)
 function buildAllProductDataResponse() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const DEFAULT_TABS = ["Konven", "Syariah", "HS", "DPLK"];
+  const DEFAULT_TABS = ["Conventional", "Sharia", "Health & Surgical", "DPLK"];
   const configuredTabs = [];
   const nonBenefitColumns = [];
   let driveFolderId = "";
@@ -231,7 +231,7 @@ function doPost(e) {
 
     // Helper: Ambil daftar PROTECTED_COLS dari sheet Config secara dinamis
     function getProtectedCols(sheetName) {
-      const isSyariah = String(sheetName || "").trim().toLowerCase() === "syariah";
+      const isSyariah = /^(sharia|syariah)$/i.test(String(sheetName || "").trim());
       const defaultCols = [
         "product name", "company name", "launch date", "tanggal rilis", "par/non par", "product type",
         "distribution channel", "currency",
@@ -772,34 +772,40 @@ function doPost(e) {
     }
 
     // ====================================================
-    // 3. ACTION: GET_FILE_BASE64 (Untuk Ekspor ZIP & Preview Inline dengan Opsi Konversi PDF)
+    // 3. ACTION: GET_FILE_BASE64 (Untuk Ekspor ZIP & Preview Inline)
+    //    asPdf: true -> file Word/PowerPoint dikonversi ke PDF khusus untuk preview
     // ====================================================
     if (payload.action === "get_file_base64" && payload.fileId) {
       const file = DriveApp.getFileById(payload.fileId);
       const asPdf = payload.asPdf === true || payload.asPdf === "true";
-      let blob;
-      let mimeType;
+      let blob = null;
+      let mimeType = "";
+      let pdfConversionError = "";
 
       if (asPdf) {
         try {
-          blob = file.getAs("application/pdf");
+          blob = convertOfficeFileToPdfBlob(file);
           mimeType = "application/pdf";
         } catch (convErr) {
-          blob = file.getBlob();
-          mimeType = file.getMimeType();
+          pdfConversionError = String(convErr && convErr.message ? convErr.message : convErr);
+          console.warn("Konversi PDF gagal, mengembalikan file asli:", pdfConversionError);
+          blob = null;
         }
-      } else {
+      }
+
+      if (!blob) {
         blob = file.getBlob();
         mimeType = file.getMimeType();
       }
 
-      const b64 = Utilities.base64Encode(blob.getBytes());
-      return jsonResponse({
+      const resObj = {
         status: "success",
         fileName: file.getName(),
         mimeType: mimeType,
-        base64: b64
-      });
+        base64: Utilities.base64Encode(blob.getBytes())
+      };
+      if (pdfConversionError) resObj.pdfConversionError = pdfConversionError;
+      return jsonResponse(resObj);
     }
 
     // ====================================================
@@ -967,13 +973,184 @@ function doPost(e) {
 }
 
 // ====================================================
+// HELPER: KONVERSI FILE WORD/POWERPOINT (.DOC/.DOCX/.PPT/.PPTX) KE PDF (KHUSUS PREVIEW)
+// Alur: salin file sebagai Google Docs/Slides (konversi otomatis Drive) -> ekspor PDF -> hapus salinan sementara.
+// Hasil PDF disimpan di cache folder "_pdf_preview_cache" agar preview berikutnya instan.
+// ====================================================
+function convertOfficeFileToPdfBlob(file) {
+  const fileName = String(file.getName() || "");
+  const ext = fileName.indexOf(".") !== -1 ? fileName.split(".").pop().toLowerCase() : "";
+  const origMime = String(file.getMimeType() || "").toLowerCase();
+
+  // File yang sudah berupa Google Docs/Slides bisa langsung diekspor ke PDF
+  if (origMime === "application/vnd.google-apps.document" || origMime === "application/vnd.google-apps.presentation") {
+    return file.getAs("application/pdf");
+  }
+
+  let targetGoogleMime = "";
+  if (ext === "doc" || ext === "docx" || origMime.indexOf("word") !== -1) {
+    targetGoogleMime = "application/vnd.google-apps.document";
+  } else if (ext === "ppt" || ext === "pptx" || origMime.indexOf("presentation") !== -1 || origMime.indexOf("powerpoint") !== -1) {
+    targetGoogleMime = "application/vnd.google-apps.presentation";
+  }
+  if (!targetGoogleMime) {
+    throw new Error("Format file tidak didukung untuk konversi PDF: " + (ext || origMime));
+  }
+
+  // 1. Bersihkan cache PDF lama secara otomatis (maksimal 1x per hari) lalu cek cache
+  maybeCleanupPdfPreviewCacheDaily_();
+  const cacheName = "pdfprev_" + file.getId() + "_" + file.getLastUpdated().getTime() + ".pdf";
+  const cacheFolder = getPdfPreviewCacheFolder_();
+  const cached = cacheFolder.getFilesByName(cacheName);
+  if (cached.hasNext()) {
+    return cached.next().getBlob().setContentType("application/pdf");
+  }
+
+  // 2. Buat salinan sementara dalam format Google (konversi otomatis oleh Drive)
+  let tempFileId = null;
+  const errors = [];
+  try {
+    // 2a. Advanced Drive Service (jika sudah ditambahkan di menu Services)
+    if (typeof Drive !== "undefined" && Drive.Files && typeof Drive.Files.copy === "function") {
+      try {
+        // Drive API v3
+        const copiedV3 = Drive.Files.copy(
+          { name: "_temp_pdf_" + fileName, mimeType: targetGoogleMime },
+          file.getId(),
+          { supportsAllDrives: true }
+        );
+        if (copiedV3 && copiedV3.id) tempFileId = copiedV3.id;
+      } catch (v3Err) {
+        errors.push("Drive v3: " + (v3Err.message || v3Err));
+        try {
+          // Drive API v2
+          const copiedV2 = Drive.Files.copy(
+            { title: "_temp_pdf_" + fileName },
+            file.getId(),
+            { convert: true, supportsAllDrives: true }
+          );
+          if (copiedV2 && copiedV2.id) tempFileId = copiedV2.id;
+        } catch (v2Err) {
+          errors.push("Drive v2: " + (v2Err.message || v2Err));
+        }
+      }
+    }
+
+    // Jika salinan dari Advanced Service tidak terkonversi, buang dan lanjut ke fallback REST
+    if (tempFileId) {
+      try {
+        if (String(DriveApp.getFileById(tempFileId).getMimeType()) !== targetGoogleMime) {
+          DriveApp.getFileById(tempFileId).setTrashed(true);
+          errors.push("Advanced Drive copy was not converted");
+          tempFileId = null;
+        }
+      } catch (chkErr) { }
+    }
+
+    // 2b. Fallback: Drive REST API v3 via UrlFetchApp (tidak perlu Advanced Service)
+    if (!tempFileId) {
+      const copyUrl = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(file.getId()) + "/copy?supportsAllDrives=true&fields=id";
+      const resp = UrlFetchApp.fetch(copyUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() },
+        payload: JSON.stringify({ name: "_temp_pdf_" + fileName, mimeType: targetGoogleMime }),
+        muteHttpExceptions: true
+      });
+      const code = resp.getResponseCode();
+      if (code >= 200 && code < 300) {
+        const parsed = JSON.parse(resp.getContentText());
+        if (parsed && parsed.id) tempFileId = parsed.id;
+      } else {
+        errors.push("Drive REST HTTP " + code + ": " + resp.getContentText().substring(0, 300));
+      }
+    }
+
+    if (!tempFileId) {
+      throw new Error(errors.join(" | ") || "Gagal membuat salinan sementara untuk konversi PDF.");
+    }
+
+    // Pastikan salinan benar-benar sudah terkonversi ke format Google (bukan salinan Office biasa)
+    const tempFile = DriveApp.getFileById(tempFileId);
+    if (String(tempFile.getMimeType()) !== targetGoogleMime) {
+      throw new Error("Salinan tidak terkonversi ke format Google (mime: " + tempFile.getMimeType() + "). " + errors.join(" | "));
+    }
+
+    // 3. Ekspor salinan Google Docs/Slides ke PDF & simpan ke cache
+    const pdfBlob = tempFile.getAs("application/pdf");
+    pdfBlob.setName(cacheName);
+    try {
+      cacheFolder.createFile(pdfBlob);
+    } catch (cacheErr) {
+      console.warn("Gagal menyimpan cache PDF:", cacheErr);
+    }
+    return pdfBlob;
+  } finally {
+    // 4. Hapus salinan sementara
+    if (tempFileId) {
+      try { DriveApp.getFileById(tempFileId).setTrashed(true); } catch (cleanupErr) { }
+    }
+  }
+}
+
+// Folder cache PDF preview (dicari berdasarkan nama di seluruh Drive, sehingga aman dipindahkan ke folder main secara manual)
+function getPdfPreviewCacheFolder_() {
+  const folderName = "_pdf_preview_cache";
+  const it = DriveApp.getFoldersByName(folderName);
+  if (it.hasNext()) return it.next();
+  return DriveApp.createFolder(folderName);
+}
+
+// Pembersihan otomatis ringan maksimal 1x per hari (tanpa perlu setup Trigger manual)
+function maybeCleanupPdfPreviewCacheDaily_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const todayKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "Asia/Jakarta", "yyyy-MM-dd");
+    const lastDay = props.getProperty("LAST_PDF_CACHE_CLEANUP_DAY");
+    if (lastDay === todayKey) return;
+    props.setProperty("LAST_PDF_CACHE_CLEANUP_DAY", todayKey);
+    cleanupPdfPreviewCache(24);
+  } catch (e) {
+    console.warn("Gagal cek pembersihan cache PDF harian:", e);
+  }
+}
+
+// Hapus isi file cache PDF yang berumur >= maxAgeHours (default 24 jam).
+// Foldernya sendiri TIDAK dihapus agar lokasi manual di folder main tetap terjaga.
+// Bisa juga dipasang di Apps Script Triggers (Time-driven -> Day timer) untuk pembersihan rutin jam malam.
+function cleanupPdfPreviewCache(maxAgeHours) {
+  const hours = (typeof maxAgeHours === "number" && !isNaN(maxAgeHours)) ? maxAgeHours : 24;
+  const cutoffMs = Date.now() - (hours * 60 * 60 * 1000);
+  const folder = getPdfPreviewCacheFolder_();
+  const files = folder.getFiles();
+  let deletedCount = 0;
+  while (files.hasNext()) {
+    const f = files.next();
+    try {
+      if (hours <= 0 || f.getLastUpdated().getTime() <= cutoffMs) {
+        f.setTrashed(true);
+        deletedCount++;
+      }
+    } catch (e) { }
+  }
+  console.log("cleanupPdfPreviewCache selesai. File cache dihapus:", deletedCount);
+  return deletedCount;
+}
+
+// ====================================================
 // FUNGSI KHUSUS UNTUK MEMICU POP-UP IZIN GOOGLE DRIVE & EMAIL (MAILAPP)
 // ====================================================
 function authorizeDrive() {
   const tempFile = DriveApp.createFile("test_permission.txt", "OK");
   tempFile.setTrashed(true);
   const quota = MailApp.getRemainingDailyQuota();
-  console.log("Izin Google Drive & MailApp Berhasil Aktif! Sisa kuota email harian:", quota);
+  // Memicu izin "Connect to an external service" (UrlFetchApp) yang dibutuhkan konversi Word/PPT -> PDF
+  const resp = UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/about?fields=user", {
+    headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true
+  });
+  getPdfPreviewCacheFolder_();
+  console.log("Izin Google Drive, MailApp & UrlFetchApp Berhasil Aktif! Sisa kuota email harian:", quota, "| Drive API HTTP:", resp.getResponseCode());
 }
 
 // ====================================================
