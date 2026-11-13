@@ -4793,8 +4793,8 @@
                         rowHpt = Math.max(rowHpt, Math.ceil(maxImgPx * 0.75));
                     }
 
-                    // Add +2.5px (1.875pt) breathing room and cap at Excel max row height (409pt)
-                    rowHpt += 1.875;
+                    // Add +2.5pt breathing room and cap at Excel max row height (409pt)
+                    rowHpt += 2.5;
                     rowHpt = Math.min(409, Math.round(rowHpt * 100) / 100);
                     return { hpt: rowHpt };
                 });
