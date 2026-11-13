@@ -55,6 +55,7 @@ function buildAllProductDataResponse() {
   const DEFAULT_TABS = ["Conventional", "Sharia", "Health & Surgical", "DPLK"];
   const configuredTabs = [];
   const nonBenefitColumns = [];
+  const benefitAliases = [];
   let driveFolderId = "";
 
   const configSheet = ss.getSheetByName("Config");
@@ -80,6 +81,12 @@ function buildAllProductDataResponse() {
         if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
           nonBenefitColumns.push(val);
         }
+      } else if (type === "benefit" && val) {
+        // Baris alias manfaat: Benefit | Nama Standar | Alias 1, Alias 2, ...
+        benefitAliases.push({
+          canonical: val,
+          aliases: splitBenefitAliasList_(extra)
+        });
       } else if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
         driveFolderId = extra;
       }
@@ -120,10 +127,107 @@ function buildAllProductDataResponse() {
     config: {
       tabs: tabsToLoad,
       nonBenefitColumns: nonBenefitColumns,
+      benefitAliases: benefitAliases,
       driveFolderId: driveFolderId
     },
     sheets: sheetsData
   };
+}
+
+// ====================================================
+// HELPER: ALIAS NAMA MANFAAT (Config: Benefit | Nama Standar | Alias 1, Alias 2, ...)
+// ====================================================
+function splitBenefitAliasList_(raw) {
+  return String(raw || "")
+    .split(/[,;\n]/)
+    .map(function(a) { return a.trim(); })
+    .filter(function(a) { return a !== ""; });
+}
+
+// Kunci pembanding nama manfaat: huruf kecil, tanpa bullet / titik dua di akhir, spasi rapat, bentuk jamak diabaikan
+// (HARUS sama dengan normalizeBenefitNameKey() di web)
+function normalizeBenefitAliasKey_(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/^[\s\-•*]+/, "")
+    .replace(/[:：]\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map(function(w) {
+      return (w.length > 3 && /s$/.test(w) && !/(ss|us|is)$/.test(w)) ? w.slice(0, -1) : w;
+    })
+    .join(" ");
+}
+
+// Simpan pemetaan alias -> nama standar ke sheet Config.
+// Satu alias hanya boleh menunjuk ke satu nama standar: jika alias sudah terdaftar di nama standar lain, alias dipindahkan.
+function saveBenefitAliases_(ss, mappings) {
+  let configSheet = ss.getSheetByName("Config");
+  if (!configSheet) {
+    configSheet = ss.insertSheet("Config");
+    configSheet.appendRow(["Type", "Value", "Extra"]);
+  }
+
+  const lastRow = configSheet.getLastRow();
+  const data = lastRow > 0 ? configSheet.getRange(1, 1, lastRow, 3).getValues() : [];
+  const benefitRows = [];
+  for (let i = 1; i < data.length; i++) {
+    const type = String(data[i][0] || "").trim().toLowerCase();
+    const canonical = String(data[i][1] || "").trim();
+    if (type === "benefit" && canonical) {
+      benefitRows.push({
+        rowNum: i + 1,
+        canonical: canonical,
+        aliases: splitBenefitAliasList_(data[i][2]),
+        dirty: false
+      });
+    }
+  }
+
+  let added = 0;
+  (mappings || []).forEach(function(m) {
+    const canonical = String((m && m.canonical) || "").trim();
+    const alias = String((m && m.alias) || "").trim().replace(/[:：]\s*$/, "").trim();
+    if (!canonical || !alias) return;
+    const canonicalKey = normalizeBenefitAliasKey_(canonical);
+    const aliasKey = normalizeBenefitAliasKey_(alias);
+    if (!aliasKey || aliasKey === canonicalKey) return;
+
+    // Hapus alias yang sama dari nama standar lain agar tidak bentrok
+    benefitRows.forEach(function(r) {
+      if (normalizeBenefitAliasKey_(r.canonical) === canonicalKey) return;
+      const before = r.aliases.length;
+      r.aliases = r.aliases.filter(function(a) { return normalizeBenefitAliasKey_(a) !== aliasKey; });
+      if (r.aliases.length !== before) r.dirty = true;
+    });
+
+    let target = benefitRows.find(function(r) { return normalizeBenefitAliasKey_(r.canonical) === canonicalKey; });
+    if (!target) {
+      target = { rowNum: null, canonical: canonical, aliases: [], dirty: true };
+      benefitRows.push(target);
+    }
+    if (!target.aliases.some(function(a) { return normalizeBenefitAliasKey_(a) === aliasKey; })) {
+      target.aliases.push(alias);
+      target.dirty = true;
+      added++;
+    }
+  });
+
+  benefitRows.forEach(function(r) {
+    if (!r.dirty) return;
+    const aliasStr = r.aliases.join(", ");
+    let rowNum = r.rowNum;
+    if (!rowNum) {
+      rowNum = configSheet.getLastRow() + 1;
+      configSheet.getRange(rowNum, 1, 1, 2).setValues([["Benefit", r.canonical]]);
+    }
+    const cell = configSheet.getRange(rowNum, 3);
+    cell.setNumberFormat("@");
+    cell.setValue(aliasStr);
+  });
+
+  return added;
 }
 
 function doGet(e) {
@@ -900,6 +1004,14 @@ function doPost(e) {
       });
 
       return jsonResponse({ status: "success", action: "delete" });
+    }
+
+    // ====================================================
+    // 4b. ACTION: SIMPAN ALIAS NAMA MANFAAT KE CONFIG (dari Review Benefit saat Upload Excel)
+    // ====================================================
+    if (payload.action === "save_benefit_aliases" && Array.isArray(payload.mappings)) {
+      const addedCount = saveBenefitAliases_(ss, payload.mappings);
+      return jsonResponse({ status: "success", action: "save_benefit_aliases", added: addedCount });
     }
 
     let sheet = ss.getSheetByName(payload.sheetName);

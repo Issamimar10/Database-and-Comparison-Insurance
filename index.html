@@ -1726,6 +1726,9 @@
                     class="hidden bg-gray-50 dark:bg-gray-700/60 p-3 rounded-lg border dark:border-gray-600 text-xs space-y-1 text-gray-600 dark:text-gray-300 max-h-36 overflow-y-auto">
                 </div>
 
+                <!-- Review Benefit: nama manfaat yang belum dikenali (dipetakan / benefit baru / diabaikan) -->
+                <div id="uploadBenefitReviewArea" class="hidden"></div>
+
                 <div class="pt-2 flex justify-end gap-2">
                     <button type="button" onclick="closeUploadModal()"
                         class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
@@ -2321,6 +2324,17 @@
         let systemConfig = {
             driveFolderId: ""
         };
+
+        // Alias nama manfaat dari sheet Config (Benefit | Nama Standar | Alias 1, Alias 2, ...)
+        let BENEFIT_ALIAS_MAP = {};            // normalizedKey -> Nama Standar
+        let BENEFIT_CONFIG_CANONICALS = new Set(); // normalizedKey dari Nama Standar di Config
+
+        // State Review Benefit saat Upload Excel
+        let benefitReviewItems = [];
+        let benefitReviewDecisions = {};       // normalizedKey -> { mode: "pending" | "new" | "ignore", name }
+        let uploadParsedSchema = [];
+        let uploadParsedSchemaStructured = false;
+        let uploadSubmitBaseEnabled = false;
 
         // --- LOGIKA DARK / LIGHT MODE ---
         // Ikon (lingkaran <-> bulan sabit) digambar sekali di HTML dan dianimasikan lewat CSS
@@ -3402,6 +3416,8 @@
                         if (data.config.driveFolderId) {
                             systemConfig.driveFolderId = data.config.driveFolderId;
                         }
+
+                        loadBenefitAliasesFromConfig(data.config.benefitAliases);
                     } else {
                         SHEET_TABS = [...DEFAULT_SHEET_TABS];
                     }
@@ -6876,6 +6892,8 @@
             document.getElementById("uploadPreviewArea").classList.add("hidden");
             document.getElementById("uploadPreviewArea").innerHTML = "";
             resetUploadSheetSelector();
+            resetBenefitReviewState();
+            uploadSubmitBaseEnabled = false;
             const submitBtn = document.getElementById("btnSubmitUpload");
             submitBtn.disabled = true;
             submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Sheets`;
@@ -8239,6 +8257,8 @@
 
             submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Sheets`;
             resetUploadSheetSelector();
+            resetBenefitReviewState();
+            uploadSubmitBaseEnabled = false;
 
             if (!fileInput.files || fileInput.files.length === 0) {
                 previewArea.classList.add("hidden");
@@ -8306,6 +8326,9 @@
             if (selectedUploadSheets.length === 0) {
                 parsedUploadRows = [];
                 parsedDuplicateRows = [];
+                benefitReviewItems = [];
+                renderBenefitReview();
+                uploadSubmitBaseEnabled = false;
                 previewArea.innerHTML = `<p class="text-amber-600 dark:text-amber-400 font-semibold"><i class="fa-solid fa-hand-pointer me-1"></i> Select at least 1 sheet to upload.</p>`;
                 submitBtn.disabled = true;
                 return;
@@ -8320,6 +8343,14 @@
                 };
 
                 let allParsed = parseExcelToSheetsSchema(filteredWorkbook, uploadWorkbookCache.images);
+
+                // Simpan skema hasil parse (untuk Review Benefit) & kumpulkan nama manfaat yang belum dikenali
+                uploadParsedSchema = [
+                    "Product Name", "Company Name", "Par/Non Par", "Product Type",
+                    "Distribution Channel", "Currency", "Launch Date", ...dynamicColumns
+                ];
+                uploadParsedSchemaStructured = allParsed.length > 0 && allParsed[0].length === uploadParsedSchema.length;
+                buildBenefitReviewItems(allParsed);
 
                 // Hitung total gambar tabel yang berhasil diekstrak
                 let totalExtractedImages = 0;
@@ -8360,7 +8391,7 @@
                         ${totalExtractedImages > 0 ? `<p class="text-emerald-700 dark:text-emerald-400 font-medium mt-0.5"><i class="fa-solid fa-images me-1"></i>${totalExtractedImages} full-resolution Table Image(s) (100% sharp) ready to update</p>` : ''}
                         <p class="text-gray-600 dark:text-gray-300 italic mt-1.5"><span class="font-semibold text-amber-700 dark:text-amber-300 not-italic">Existing Products Preview (${duplicateCount}):</span> ${escapeHtmlAttr(sampleDupText)}</p>
                         <label class="flex items-center gap-2 mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 cursor-pointer">
-                            <input type="checkbox" id="chkOverwriteDuplicates" checked onchange="document.getElementById('btnSubmitUpload').disabled = !this.checked" class="w-4 h-4 accent-blue-600 rounded cursor-pointer">
+                            <input type="checkbox" id="chkOverwriteDuplicates" checked onchange="uploadSubmitBaseEnabled = this.checked; refreshUploadSubmitState();" class="w-4 h-4 accent-blue-600 rounded cursor-pointer">
                             <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">Update / overwrite ${duplicateCount} existing product(s) with the latest data & images</span>
                         </label>
                     `;
@@ -8410,11 +8441,421 @@
                             <p class="mb-1 flex flex-wrap items-center gap-1"><span class="text-[11px] text-gray-500 dark:text-gray-400">Target:</span> ${badges}</p>`);
                 }
                 previewArea.classList.remove("hidden");
+
+                // Tombol Upload hanya aktif jika file valid DAN semua kartu Review Benefit sudah diputuskan
+                uploadSubmitBaseEnabled = !submitBtn.disabled;
+                renderBenefitReview();
             } catch (err) {
                 console.error(err);
+                benefitReviewItems = [];
+                renderBenefitReview();
+                uploadSubmitBaseEnabled = false;
                 previewArea.innerHTML = `<p class="text-red-500"><i class="fa-solid fa-circle-xmark"></i> Failed to process selected sheets: ${escapeHtmlAttr(err.message || err)}</p>`;
                 submitBtn.disabled = true;
             }
+        }
+
+        // =====================================================================
+        // ALIAS NAMA MANFAAT + REVIEW BENEFIT SAAT UPLOAD EXCEL
+        // =====================================================================
+
+        // Kunci pembanding nama manfaat: huruf kecil, tanpa bullet / titik dua di akhir, spasi rapat, bentuk jamak diabaikan
+        // (HARUS sama dengan normalizeBenefitAliasKey_() di Apps Script)
+        function normalizeBenefitNameKey(name) {
+            return String(name || "")
+                .toLowerCase()
+                .replace(/^[\s\-•*]+/, "")
+                .replace(/[:：]\s*$/, "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .split(" ")
+                .map(w => (w.length > 3 && /s$/.test(w) && !/(ss|us|is)$/.test(w)) ? w.slice(0, -1) : w)
+                .join(" ");
+        }
+
+        function loadBenefitAliasesFromConfig(aliasRows) {
+            BENEFIT_ALIAS_MAP = {};
+            BENEFIT_CONFIG_CANONICALS = new Set();
+            if (!Array.isArray(aliasRows)) return;
+            aliasRows.forEach(item => {
+                const canonical = String((item && item.canonical) || "").trim();
+                if (!canonical) return;
+                const cKey = normalizeBenefitNameKey(canonical);
+                BENEFIT_CONFIG_CANONICALS.add(cKey);
+                if (!BENEFIT_ALIAS_MAP[cKey]) BENEFIT_ALIAS_MAP[cKey] = canonical;
+                (Array.isArray(item.aliases) ? item.aliases : []).forEach(a => {
+                    const aKey = normalizeBenefitNameKey(a);
+                    if (aKey && !BENEFIT_ALIAS_MAP[aKey]) BENEFIT_ALIAS_MAP[aKey] = canonical;
+                });
+            });
+        }
+
+        function isBenefitLikeColumn(col) {
+            return Boolean(col) && !isNonBenefitColumn(col) && !isDplkChargeColumn(col);
+        }
+
+        // Cari nama kolom manfaat yang sudah dikenal (kolom yang ada / nama standar / alias Config) untuk nama mentah dari Excel
+        function resolveKnownBenefitName(rawName, extraCandidates = []) {
+            const key = normalizeBenefitNameKey(rawName);
+            if (!key) return null;
+            const candidates = [...dynamicColumns.filter(isBenefitLikeColumn), ...extraCandidates];
+            const direct = candidates.find(c => normalizeBenefitNameKey(c) === key);
+            if (direct) return direct;
+
+            const aliasCanonical = BENEFIT_ALIAS_MAP[key];
+            if (aliasCanonical) {
+                const aKey = normalizeBenefitNameKey(aliasCanonical);
+                return candidates.find(c => normalizeBenefitNameKey(c) === aKey) || aliasCanonical;
+            }
+            return null;
+        }
+
+        // Kolom manfaat yang SUDAH ADA di Master Sheet (sebelum file Excel ini diproses)
+        function getExistingMasterBenefitColumns() {
+            const base = (uploadWorkbookCache && Array.isArray(uploadWorkbookCache.baseColumns))
+                ? uploadWorkbookCache.baseColumns
+                : dynamicColumns;
+            return base.filter(isBenefitLikeColumn);
+        }
+
+        // Cocokkan nama ketikan user ke kolom manfaat yang sudah ada di Master Sheet (langsung atau lewat alias Config)
+        function findExistingMasterBenefit(name) {
+            const key = normalizeBenefitNameKey(name);
+            if (!key) return null;
+            const existing = getExistingMasterBenefitColumns();
+            const direct = existing.find(c => normalizeBenefitNameKey(c) === key);
+            if (direct) return direct;
+            const aliasCanonical = BENEFIT_ALIAS_MAP[key];
+            if (aliasCanonical) {
+                const aKey = normalizeBenefitNameKey(aliasCanonical);
+                return existing.find(c => normalizeBenefitNameKey(c) === aKey) || null;
+            }
+            return null;
+        }
+
+        function bigramDice(a, b) {
+            if (a === b) return 1;
+            if (a.length < 2 || b.length < 2) return 0;
+            const grams = s => { const m = new Map(); for (let i = 0; i < s.length - 1; i++) { const g = s.substr(i, 2); m.set(g, (m.get(g) || 0) + 1); } return m; };
+            const ga = grams(a), gb = grams(b);
+            let overlap = 0;
+            ga.forEach((cnt, g) => { overlap += Math.min(cnt, gb.get(g) || 0); });
+            return (2 * overlap) / (a.length - 1 + b.length - 1);
+        }
+
+        // Skor kemiripan 0..1 antar nama manfaat (per kata; singkatan seperti "Add" ~ "Additional" dihitung mirip)
+        function benefitNameSimilarity(a, b) {
+            const ta = normalizeBenefitNameKey(a).split(/[^a-z0-9]+/).filter(Boolean);
+            const tb = normalizeBenefitNameKey(b).split(/[^a-z0-9]+/).filter(Boolean);
+            if (!ta.length || !tb.length) return 0;
+            const tokenScore = (x, y) => {
+                if (x === y) return 1;
+                if (x.length >= 2 && y.length >= 2 && (x.startsWith(y) || y.startsWith(x))) return 0.85;
+                return bigramDice(x, y);
+            };
+            const dir = (A, B) => A.reduce((sum, x) => sum + Math.max(...B.map(y => tokenScore(x, y))), 0) / A.length;
+            return (dir(ta, tb) + dir(tb, ta)) / 2;
+        }
+
+        function getBenefitSuggestions(name, limit = 3) {
+            return getExistingMasterBenefitColumns()
+                .map(col => ({ col, score: benefitNameSimilarity(name, col) }))
+                .filter(x => x.score >= 0.4)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, limit)
+                .map(x => x.col);
+        }
+
+        function stripImageTokensForSnippet(val) {
+            return String(val || "").replace(/\[IMG(?:_ID)?:[^\]]*\]/g, "").trim();
+        }
+
+        // Kumpulkan nama manfaat dari Excel yang belum ada di Master Sheet maupun di Config
+        function buildBenefitReviewItems(allParsed) {
+            benefitReviewItems = [];
+            if (!uploadParsedSchemaStructured || !allParsed || allParsed.length === 0) return;
+
+            const existingKeys = new Set(getExistingMasterBenefitColumns().map(normalizeBenefitNameKey));
+            const schema = uploadParsedSchema;
+
+            schema.slice(7).forEach(col => {
+                if (!isBenefitLikeColumn(col)) return;
+                const key = normalizeBenefitNameKey(col);
+                if (existingKeys.has(key) || BENEFIT_CONFIG_CANONICALS.has(key)) return;
+
+                const colIdx = schema.indexOf(col);
+                const usedBy = [];
+                allParsed.forEach(row => {
+                    const v = row[colIdx];
+                    if (!isEmptyVal(v)) usedBy.push({ name: String(row[0] || "-"), value: String(v) });
+                });
+                if (usedBy.length === 0) return;
+
+                if (!benefitReviewDecisions[key]) {
+                    benefitReviewDecisions[key] = { mode: "pending", name: col };
+                }
+                benefitReviewItems.push({ col, key, usedBy, suggestions: getBenefitSuggestions(col) });
+            });
+        }
+
+        // Evaluasi keputusan user untuk satu kartu review
+        function evaluateBenefitReviewItem(item) {
+            const d = benefitReviewDecisions[item.key] || { mode: "pending", name: item.col };
+            const name = String(d.name || "").trim();
+
+            if (d.mode === "ignore") {
+                return { valid: true, action: "ignore", target: null, tone: "gray", msg: `Skipped — this benefit will not be imported.` };
+            }
+            if (!name) {
+                return { valid: false, tone: "red", msg: `Benefit name cannot be empty.` };
+            }
+            if (isNonBenefitColumn(name)) {
+                return { valid: false, tone: "red", msg: `<strong>"${escapeHtmlAttr(name)}"</strong> is a Product Provision / Specification column, not a Benefit.` };
+            }
+            if (isDplkChargeColumn(name)) {
+                return { valid: false, tone: "red", msg: `<strong>"${escapeHtmlAttr(name)}"</strong> is a Charge component, not a Benefit.` };
+            }
+
+            const existing = findExistingMasterBenefit(name);
+            if (existing) {
+                const willAlias = normalizeBenefitNameKey(item.col) !== normalizeBenefitNameKey(existing);
+                return {
+                    valid: true, action: "map", target: existing, tone: "green",
+                    msg: `Will be merged into existing benefit <strong>"${escapeHtmlAttr(existing)}"</strong>${willAlias ? ` &mdash; <em>"${escapeHtmlAttr(item.col)}"</em> will be saved as its alias in Config.` : "."}`
+                };
+            }
+            if (d.mode === "new") {
+                const renamed = normalizeBenefitNameKey(item.col) !== normalizeBenefitNameKey(name);
+                return {
+                    valid: true, action: "new", target: name, tone: "amber",
+                    msg: `New benefit column <strong>"${escapeHtmlAttr(name)}"</strong> will be added to the Master Sheet${renamed ? ` &mdash; <em>"${escapeHtmlAttr(item.col)}"</em> will be saved as its alias in Config.` : "."}`
+                };
+            }
+            return {
+                valid: false, tone: "red",
+                msg: `<strong>"${escapeHtmlAttr(name)}"</strong> does not exist in the Master Sheet. Pick an existing benefit, or tick <strong>New Benefit</strong>.`
+            };
+        }
+
+        function isBenefitReviewAllValid() {
+            return benefitReviewItems.every(item => evaluateBenefitReviewItem(item).valid);
+        }
+
+        function refreshUploadSubmitState() {
+            const submitBtn = document.getElementById("btnSubmitUpload");
+            if (!submitBtn) return;
+            submitBtn.disabled = !(uploadSubmitBaseEnabled && isBenefitReviewAllValid());
+        }
+
+        const BENEFIT_REVIEW_TONE_CLASSES = {
+            green: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800",
+            amber: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800",
+            red: "bg-red-50 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800",
+            gray: "bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700"
+        };
+        const BENEFIT_REVIEW_TONE_ICONS = { green: "fa-circle-check", amber: "fa-wand-magic-sparkles", red: "fa-triangle-exclamation", gray: "fa-eye-slash" };
+
+        function updateBenefitReviewCardStatus(idx) {
+            const item = benefitReviewItems[idx];
+            const statusEl = document.getElementById(`benefitReviewStatus_${idx}`);
+            const cardEl = document.getElementById(`benefitReviewCard_${idx}`);
+            if (!item || !statusEl) return;
+            const ev = evaluateBenefitReviewItem(item);
+            statusEl.className = `mt-1.5 text-[11px] px-2.5 py-1 rounded-md border font-medium ${BENEFIT_REVIEW_TONE_CLASSES[ev.tone] || BENEFIT_REVIEW_TONE_CLASSES.gray}`;
+            statusEl.innerHTML = `<i class="fa-solid ${BENEFIT_REVIEW_TONE_ICONS[ev.tone] || "fa-circle-info"} me-1"></i>${ev.msg}`;
+            if (cardEl) {
+                cardEl.classList.toggle("border-red-300", !ev.valid);
+                cardEl.classList.toggle("dark:border-red-700", !ev.valid);
+            }
+            updateBenefitReviewSummary();
+            refreshUploadSubmitState();
+        }
+
+        function updateBenefitReviewSummary() {
+            const el = document.getElementById("benefitReviewSummary");
+            if (!el) return;
+            const total = benefitReviewItems.length;
+            const done = benefitReviewItems.filter(item => evaluateBenefitReviewItem(item).valid).length;
+            el.className = `text-[11px] font-semibold ${done === total ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`;
+            el.innerHTML = done === total
+                ? `<i class="fa-solid fa-circle-check me-1"></i>All ${total} benefit(s) reviewed. Ready to upload.`
+                : `<i class="fa-solid fa-hourglass-half me-1"></i>${done} of ${total} reviewed &mdash; resolve the remaining card(s) to enable upload.`;
+        }
+
+        function renderBenefitReview() {
+            const area = document.getElementById("uploadBenefitReviewArea");
+            if (!area) return;
+            if (benefitReviewItems.length === 0) {
+                area.innerHTML = "";
+                area.classList.add("hidden");
+                refreshUploadSubmitState();
+                return;
+            }
+
+            const existingOptions = getExistingMasterBenefitColumns()
+                .slice()
+                .sort((a, b) => a.localeCompare(b))
+                .map(c => `<option value="${escapeHtmlAttr(c)}"></option>`)
+                .join("");
+
+            const cardsHtml = benefitReviewItems.map((item, idx) => {
+                const d = benefitReviewDecisions[item.key];
+                const isIgnored = d.mode === "ignore";
+                const isNew = d.mode === "new";
+
+                const maxBadges = 6;
+                const badges = item.usedBy.slice(0, maxBadges).map(u =>
+                    `<span class="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-300">${escapeHtmlAttr(u.name)}</span>`
+                ).join(" ") + (item.usedBy.length > maxBadges
+                    ? ` <span class="text-[10px] text-gray-500 dark:text-gray-400">+${item.usedBy.length - maxBadges} more</span>`
+                    : "");
+
+                const snippetRaw = stripImageTokensForSnippet(item.usedBy[0].value);
+                const snippet = snippetRaw.length > 220 ? snippetRaw.slice(0, 220) + "…" : snippetRaw;
+
+                const suggestionsHtml = (!isIgnored && item.suggestions.length > 0)
+                    ? `<div class="flex flex-wrap items-center gap-1 mt-1.5">
+                           <span class="text-[10px] text-gray-500 dark:text-gray-400">Similar:</span>
+                           ${item.suggestions.map((s, sIdx) =>
+                               `<button type="button" onclick="onBenefitReviewPickSuggestion(${idx}, ${sIdx})" class="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 text-blue-700 dark:bg-blue-900/50 dark:hover:bg-blue-800/60 dark:text-blue-300 transition">${escapeHtmlAttr(s)}</button>`
+                           ).join("")}
+                       </div>`
+                    : "";
+
+                return `
+                    <div id="benefitReviewCard_${idx}" class="p-3 rounded-xl border bg-white dark:bg-slate-800/80 border-gray-200 dark:border-slate-600 transition ${isIgnored ? "opacity-60" : ""}">
+                        <div class="flex flex-wrap items-center gap-1 mb-1.5">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 me-0.5">${item.usedBy.length > 1 ? "Products" : "Product"}:</span>
+                            ${badges}
+                        </div>
+                        <div class="flex items-center justify-between gap-2 mb-1">
+                            <span class="text-[11px] text-gray-500 dark:text-gray-400 truncate" title="${escapeHtmlAttr(item.col)}">Detected: <strong class="text-gray-700 dark:text-gray-200">"${escapeHtmlAttr(item.col)}"</strong></span>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <label class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300 cursor-pointer select-none ${isIgnored ? "pointer-events-none opacity-50" : ""}">
+                                    <input type="checkbox" ${isNew ? "checked" : ""} ${isIgnored ? "disabled" : ""} onchange="onBenefitReviewModeChange(${idx}, this.checked ? 'new' : 'pending')" class="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer">
+                                    New Benefit
+                                </label>
+                                <button type="button" onclick="onBenefitReviewModeChange(${idx}, '${isIgnored ? "pending" : "ignore"}')" class="text-[11px] font-semibold px-2 py-0.5 rounded-md transition ${isIgnored ? "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200" : "text-gray-400 hover:text-red-500 dark:hover:text-red-400"}">
+                                    <i class="fa-solid ${isIgnored ? "fa-rotate-left" : "fa-eye-slash"} me-0.5"></i>${isIgnored ? "Undo" : "Ignore"}
+                                </button>
+                            </div>
+                        </div>
+                        <input type="text" list="benefitReviewDatalist" value="${escapeHtmlAttr(d.name)}" ${isIgnored ? "disabled" : ""}
+                               oninput="onBenefitReviewNameInput(${idx}, this.value)"
+                               placeholder="Type or select an existing benefit name..."
+                               class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg p-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-60">
+                        ${suggestionsHtml}
+                        <div id="benefitReviewStatus_${idx}"></div>
+                        ${snippet ? `<div class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 whitespace-pre-line bg-gray-50 dark:bg-gray-900/40 rounded-md p-2 max-h-20 overflow-hidden">${escapeHtmlAttr(snippet)}</div>` : ""}
+                    </div>`;
+            }).join("");
+
+            area.innerHTML = `
+                <div class="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-950/30 p-3 space-y-2">
+                    <p class="text-xs font-bold text-amber-700 dark:text-amber-300"><i class="fa-solid fa-list-check me-1"></i>Review ${benefitReviewItems.length} unrecognized benefit name(s)</p>
+                    <p class="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">
+                        Change the name to the matching <strong>existing benefit</strong> (the detected name will be remembered as an alias in Config),
+                        tick <strong>New Benefit</strong> to add it as a new column, or <strong>Ignore</strong> to skip it.
+                    </p>
+                    <p id="benefitReviewSummary"></p>
+                    <div class="space-y-2">${cardsHtml}</div>
+                    <datalist id="benefitReviewDatalist">${existingOptions}</datalist>
+                </div>`;
+            area.classList.remove("hidden");
+
+            benefitReviewItems.forEach((_, idx) => updateBenefitReviewCardStatus(idx));
+            updateBenefitReviewSummary();
+            refreshUploadSubmitState();
+        }
+
+        function onBenefitReviewNameInput(idx, value) {
+            const item = benefitReviewItems[idx];
+            if (!item) return;
+            benefitReviewDecisions[item.key].name = value;
+            updateBenefitReviewCardStatus(idx);
+        }
+
+        function onBenefitReviewModeChange(idx, mode) {
+            const item = benefitReviewItems[idx];
+            if (!item) return;
+            benefitReviewDecisions[item.key].mode = mode;
+            preserveUploadScroll(() => renderBenefitReview());
+        }
+
+        function onBenefitReviewPickSuggestion(idx, sIdx) {
+            const item = benefitReviewItems[idx];
+            if (!item || !item.suggestions[sIdx]) return;
+            benefitReviewDecisions[item.key] = { mode: "pending", name: item.suggestions[sIdx] };
+            preserveUploadScroll(() => renderBenefitReview());
+        }
+
+        function resetBenefitReviewState() {
+            benefitReviewItems = [];
+            benefitReviewDecisions = {};
+            uploadParsedSchema = [];
+            uploadParsedSchemaStructured = false;
+            const area = document.getElementById("uploadBenefitReviewArea");
+            if (area) { area.innerHTML = ""; area.classList.add("hidden"); }
+        }
+
+        // Terapkan keputusan Review Benefit ke baris upload: gabung ke kolom yang ada, ganti nama, atau buang kolom.
+        // Mengembalikan baris baru + daftar alias yang perlu disimpan ke Config.
+        function applyBenefitReviewDecisions(rows) {
+            const aliasMappings = [];
+            if (!uploadParsedSchemaStructured || benefitReviewItems.length === 0) {
+                return { rows, aliasMappings };
+            }
+
+            const schema = uploadParsedSchema.slice();
+            const newRows = rows.map(r => {
+                const copy = r.slice();
+                copy.__sheetName = r.__sheetName;
+                return copy;
+            });
+            const dropIdx = new Set();
+
+            benefitReviewItems.forEach(item => {
+                const ev = evaluateBenefitReviewItem(item);
+                const srcIdx = schema.findIndex((c, i) => c === item.col && !dropIdx.has(i));
+                if (srcIdx === -1 || !ev.valid) return;
+
+                if (ev.action === "ignore") {
+                    dropIdx.add(srcIdx);
+                    return;
+                }
+
+                const target = ev.target;
+                if (normalizeBenefitNameKey(item.col) !== normalizeBenefitNameKey(target)) {
+                    aliasMappings.push({ canonical: target, alias: item.col });
+                }
+                if (target === item.col) return;
+
+                const tgtIdx = schema.findIndex((c, i) => i !== srcIdx && !dropIdx.has(i) && c.toLowerCase() === target.toLowerCase());
+                if (tgtIdx === -1) {
+                    // Benefit baru dengan nama yang sudah diperbaiki: cukup ganti nama kolomnya
+                    schema[srcIdx] = target;
+                    return;
+                }
+
+                // Gabungkan isi ke kolom manfaat yang sudah ada
+                newRows.forEach(r => {
+                    const sv = r[srcIdx];
+                    if (isEmptyVal(sv)) return;
+                    const tv = r[tgtIdx];
+                    r[tgtIdx] = isEmptyVal(tv) ? sv : `${tv}\n${sv}`;
+                });
+                dropIdx.add(srcIdx);
+            });
+
+            const keepIdx = schema.map((_, i) => i).filter(i => !dropIdx.has(i));
+            const finalRows = newRows.map(r => {
+                const out = keepIdx.map(i => r[i]);
+                out.__sheetName = r.__sheetName;
+                return out;
+            });
+            dynamicColumns = keepIdx.map(i => schema[i]).slice(7);
+
+            return { rows: finalRows, aliasMappings };
         }
 
         // Helper untuk mengekstrak Nama Manfaat & Deskripsi Manfaat dari sel Excel (dengan atau tanpa tanda ":")
@@ -8431,22 +8872,30 @@
                 if (lowerK === "accident death benefit" || lowerK === "accidental death benefit") {
                     return { key: "Accidental Death Benefit", value: v };
                 }
-                if (lowerK.startsWith("maturity benefit")) {
-                    const extraTag = k.substring("Maturity Benefit".length).trim();
+
+                // Cocokkan dengan kolom manfaat yang sudah ada / nama standar / alias di Config
+                // (abaikan huruf besar-kecil, titik dua di akhir, spasi ganda, dan bentuk jamak: "Maturity Benefits" -> "Maturity Benefit")
+                const resolvedKnown = resolveKnownBenefitName(k, standardBenefits.filter(b => b !== "Accident Death Benefit"));
+                if (resolvedKnown) {
+                    return { key: resolvedKnown, value: v };
+                }
+
+                if (/^maturity benefits?\b/i.test(k)) {
+                    const extraTag = k.replace(/^maturity benefits?\b/i, "").trim();
                     return {
                         key: "Maturity Benefit",
                         value: extraTag ? `${extraTag}\n${v}`.trim() : v
                     };
                 }
-                if (lowerK.startsWith("ci benefit")) {
-                    const extraTag = k.substring("CI Benefit".length).trim();
+                if (/^ci benefits?\b/i.test(k)) {
+                    const extraTag = k.replace(/^ci benefits?\b/i, "").trim();
                     return {
                         key: "Critical Illness Benefit",
                         value: extraTag ? `${extraTag}\n${v}`.trim() : v
                     };
                 }
-                if (lowerK.startsWith("additional death benefit") && lowerK !== "additional death benefit") {
-                    const extraTag = k.substring("Additional Death Benefit".length).trim();
+                if (/^additional death benefits?\b/i.test(k) && !/^additional death benefits?$/i.test(k)) {
+                    const extraTag = k.replace(/^additional death benefits?\b/i, "").trim();
                     return {
                         key: "Additional Death Benefit",
                         value: extraTag ? `${extraTag}:\n${v}`.trim() : v
@@ -8972,7 +9421,8 @@
                             // Cek apakah ini manfaat DPLK (mode Checklist "✓")
                             const dplkBenCol = hasText ? extractDplkBenefitColumn(val) : null;
                             if (dplkBenCol && (isDplkFormatSheet || !val.includes(":"))) {
-                                const existingCol = dynamicColumns.find(col => col.toLowerCase() === dplkBenCol.toLowerCase());
+                                const existingCol = dynamicColumns.find(col => col.toLowerCase() === dplkBenCol.toLowerCase())
+                                    || resolveKnownBenefitName(dplkBenCol);
                                 const finalColName = existingCol || dplkBenCol;
                                 if (!dynamicColumns.includes(finalColName) && !isNonBenefitColumn(finalColName)) {
                                     const insertIdx = Math.min(5, dynamicColumns.length);
@@ -8998,7 +9448,8 @@
                             }
 
                             if (targetBenefitCol) {
-                                const existingCol = dynamicColumns.find(col => col.toLowerCase() === targetBenefitCol.toLowerCase());
+                                const existingCol = dynamicColumns.find(col => col.toLowerCase() === targetBenefitCol.toLowerCase())
+                                    || resolveKnownBenefitName(targetBenefitCol);
                                 const finalColName = existingCol || targetBenefitCol;
                                 targetBenefitCol = finalColName;
                                 lastBenefitTargetByRow[r] = finalColName;
@@ -9193,11 +9644,18 @@
         async function processAndUploadExcel() {
             const chkOverwrite = document.getElementById("chkOverwriteDuplicates");
             const includeDuplicates = Boolean(chkOverwrite && chkOverwrite.checked);
-            const rowsToUpload = includeDuplicates
+            const rawRowsToUpload = includeDuplicates
                 ? [...parsedUploadRows, ...parsedDuplicateRows]
                 : [...parsedUploadRows];
 
-            if (rowsToUpload.length === 0) return;
+            if (rawRowsToUpload.length === 0) return;
+            if (!isBenefitReviewAllValid()) {
+                refreshUploadSubmitState();
+                return;
+            }
+
+            // Terapkan keputusan Review Benefit (gabung ke benefit yang ada / ganti nama / abaikan)
+            const { rows: rowsToUpload, aliasMappings } = applyBenefitReviewDecisions(rawRowsToUpload);
 
             const submitBtn = document.getElementById("btnSubmitUpload");
             const previewArea = document.getElementById("uploadPreviewArea");
@@ -9253,11 +9711,34 @@
                     uploadSummary.push({ tabName, count: finalRows.length });
                 }
 
+                // Simpan alias nama manfaat hasil Review ke sheet Config (agar upload berikutnya otomatis dikenali)
+                let savedAliasCount = 0;
+                if (aliasMappings.length > 0) {
+                    submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Saving benefit aliases to Config...`;
+                    try {
+                        await fetch(APPS_SCRIPT_URL, {
+                            method: 'POST',
+                            mode: 'no-cors',
+                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                            body: JSON.stringify({ action: "save_benefit_aliases", mappings: aliasMappings })
+                        });
+                        savedAliasCount = aliasMappings.length;
+                        aliasMappings.forEach(m => {
+                            const aKey = normalizeBenefitNameKey(m.alias);
+                            BENEFIT_ALIAS_MAP[aKey] = m.canonical;
+                        });
+                    } catch (aliasErr) {
+                        console.warn("Failed to save benefit aliases to Config:", aliasErr);
+                    }
+                }
+
                 const totalUploaded = uploadSummary.reduce((sum, x) => sum + x.count, 0);
                 previewArea.innerHTML = `
                     <p class="font-bold text-green-700 dark:text-green-400 text-sm"><i class="fa-solid fa-circle-check"></i> Successfully Uploaded!</p>
                     <p class="text-xs text-gray-600 dark:text-gray-300">${totalUploaded} product(s) successfully saved to: ${uploadSummary.map(x => `tab <strong>${x.tabName}</strong> (${x.count})`).join(", ")}.</p>
+                    ${savedAliasCount > 0 ? `<p class="text-xs text-emerald-700 dark:text-emerald-400"><i class="fa-solid fa-tags me-1"></i>${savedAliasCount} benefit alias(es) saved to Config.</p>` : ""}
                 `;
+                resetBenefitReviewState();
 
                 setTimeout(() => {
                     submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Sheets`;
