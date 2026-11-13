@@ -2568,13 +2568,14 @@
         // Helper to parse DPLK Benefit cell value ("✓", "✅", or "✓ | Remark text")
         function parseDplkBenefitValue(rawVal) {
             const str = String(rawVal || "").trim();
-            if (!str || str === "-") return { checked: false, remark: "" };
-            if (str === "✓" || str === "✅") return { checked: true, remark: "" };
+            if (!str || str === "-") return { isChecked: false, checked: false, remark: "" };
+            if (str === "✓" || str === "✅") return { isChecked: true, checked: true, remark: "" };
             const match = str.match(/^(?:✓|✅)(?:\s*\|\s*|\s*:\s*|\r?\n|\s+)([\s\S]+)$/);
             if (match) {
-                return { checked: true, remark: (match[1] || "").trim() };
+                const rem = (match[1] || "").trim();
+                return { isChecked: true, checked: true, remark: rem };
             }
-            return { checked: false, remark: "" };
+            return { isChecked: false, checked: false, remark: "" };
         }
 
         // Converts lines starting with "-" into bullet points while keeping mid-sentence "-" intact
@@ -4568,7 +4569,7 @@
 
             try {
                 let ws_data = [];
-                const FIRST_COL_WCH = 26;
+                const FIRST_COL_WCH = 28;
                 const PROD_COL_WCH = 38;
                 const PROD_COL_WPX = 270;
                 const MAX_IMG_DISPLAY_W = 248;
@@ -4699,55 +4700,102 @@
 
                 // 1. Column Widths
                 ws['!cols'] = [
-                    { wch: FIRST_COL_WCH, wpx: 190 },
+                    { wch: FIRST_COL_WCH },
                     ...currentComparisonProducts.map(() => ({ wch: PROD_COL_WCH, wpx: PROD_COL_WPX }))
                 ];
 
-                // 2. Dynamic & Tight Row Heights based on the cell with the most wrapped lines in each row
+                // 2. Dynamic & Tight Row Heights: measure exact wrapped lines using Calibri 10pt metrics,
+                //    fit to the tallest cell in each row, and add +10 px breathing room.
+                const measureCanvas = document.createElement('canvas');
+                const measureCtx = measureCanvas.getContext('2d');
+                const countWrappedLines = (text, maxWidthPx, isBold) => {
+                    const str = String(text || "").trim();
+                    if (!str) return 1;
+                    if (!measureCtx) {
+                        const approxChars = Math.max(20, Math.floor(maxWidthPx / 5.2));
+                        return str.split('\n').reduce((acc, ln) => acc + Math.max(1, Math.ceil(ln.trim().length / approxChars)), 0);
+                    }
+                    measureCtx.font = `${isBold ? 'bold ' : ''}10pt Calibri, Arial, sans-serif`;
+                    let totalLines = 0;
+                    const paragraphs = str.split('\n');
+                    paragraphs.forEach(para => {
+                        const trimmed = para.replace(/\s+$/g, '');
+                        if (!trimmed) {
+                            totalLines += 1;
+                            return;
+                        }
+                        if (measureCtx.measureText(trimmed).width <= maxWidthPx) {
+                            totalLines += 1;
+                            return;
+                        }
+                        const words = trimmed.split(/(\s+)/);
+                        let currentLine = "";
+                        let paraLines = 1;
+                        for (let i = 0; i < words.length; i++) {
+                            const token = words[i];
+                            if (!token.trim()) {
+                                currentLine += token;
+                                continue;
+                            }
+                            const testLine = currentLine + token;
+                            if (measureCtx.measureText(testLine).width <= maxWidthPx) {
+                                currentLine = testLine;
+                            } else {
+                                if (currentLine.trim().length > 0) {
+                                    paraLines += 1;
+                                    currentLine = token;
+                                } else {
+                                    currentLine = token;
+                                }
+                                // Handle single long word/URL wider than the column
+                                while (measureCtx.measureText(currentLine).width > maxWidthPx && currentLine.length > 1) {
+                                    let cut = currentLine.length - 1;
+                                    while (cut > 1 && measureCtx.measureText(currentLine.slice(0, cut)).width > maxWidthPx) {
+                                        cut--;
+                                    }
+                                    paraLines += 1;
+                                    currentLine = currentLine.slice(cut);
+                                }
+                            }
+                        }
+                        totalLines += paraLines;
+                    });
+                    return Math.max(1, totalLines);
+                };
+
                 ws['!rows'] = ws_data.map((row, rIdx) => {
                     const featObj = rIdx >= 2 ? currentComparisonFeatures[rIdx - 2] : null;
                     if (featObj && featObj.isSectionHeader) {
-                        return { hpt: 22, hpx: 29 };
+                        return { hpt: 22 };
                     }
 
                     let maxWrappedLines = 1;
                     row.forEach((cellText, cIdx) => {
                         const str = String(cellText || "").trim();
                         if (!str) return;
-                        // Calibri 10pt proportional font fits ~30 chars in col 0 (190px) and ~46 chars in product cols (270px)
-                        const effectiveCharLimit = (cIdx === 0) ? 30 : 46;
-                        const paragraphs = str.split('\n');
-                        let totalLines = 0;
-                        paragraphs.forEach(line => {
-                            const cleanLine = line.trim();
-                            totalLines += Math.max(1, Math.ceil(cleanLine.length / effectiveCharLimit));
-                        });
-                        if (totalLines > maxWrappedLines) {
-                            maxWrappedLines = totalLines;
+                        // Match Excel wch: 38 (~271px) / col 0 (wch: 28, ~170px)
+                        const usableWidthPx = (cIdx === 0) ? 170 : PROD_COL_WPX;
+                        const isBoldCell = (cIdx === 0 || rIdx === 0 || rIdx === 1);
+                        const lines = countWrappedLines(str, usableWidthPx, isBoldCell);
+                        if (lines > maxWrappedLines) {
+                            maxWrappedLines = lines;
                         }
                     });
 
-                    if (rIdx === 0) {
-                        const compHpt = (maxWrappedLines === 1) ? 20 : (maxWrappedLines * 14 + 6);
-                        return { hpt: compHpt, hpx: Math.round(compHpt * 1.33) };
-                    }
-                    if (rIdx === 1) {
-                        const prodHpt = (maxWrappedLines === 1) ? 22 : (maxWrappedLines * 15 + 6);
-                        return { hpt: prodHpt, hpx: Math.round(prodHpt * 1.33) };
-                    }
-
-                    let rowHpt = (maxWrappedLines === 1)
-                        ? 19
-                        : (maxWrappedLines * 14 + 5);
+                    // Excel AutoFit height for Calibri 10pt is 12.75pt/line (= 16 * 79.6875%), 11pt header is ~14pt/line.
+                    // Omit hpx so xlsx-js-style writes hpt directly to <row ht="...">.
+                    const linePt = (rIdx === 1) ? 14 : 12.75;
+                    let rowHpt = maxWrappedLines * linePt;
 
                     const imgHeightsPx = cellRequiredHeightPx[rIdx] || [];
                     if (imgHeightsPx.length > 0) {
                         const maxImgPx = Math.max(...imgHeightsPx);
-                        const imgHpt = Math.ceil(maxImgPx * 0.75) + 4;
-                        rowHpt = Math.min(409, Math.max(rowHpt, imgHpt));
+                        rowHpt = Math.max(rowHpt, Math.ceil(maxImgPx * 0.75));
                     }
 
-                    return { hpt: rowHpt, hpx: Math.round(rowHpt * 1.33) };
+                    // Excel max row height is 409pt
+                    rowHpt = Math.min(409, Math.round(rowHpt * 100) / 100);
+                    return { hpt: rowHpt };
                 });
 
                 // 3. Apply Wrap Text, Alignment, and Black Borders
@@ -4758,11 +4806,14 @@
                     right: { style: "thin", color: { rgb: "000000" } }
                 };
 
+                const entryAgeRowIdxFound = ws_data.findIndex(r => String(r[0] || "").trim().toLowerCase() === "entry age");
+                const topAlignStartRow = entryAgeRowIdxFound !== -1 ? entryAgeRowIdxFound : 5;
                 const totalCols = companyRow.length;
                 for (let r = 0; r < ws_data.length; r++) {
                     const featObj = r >= 2 ? currentComparisonFeatures[r - 2] : null;
                     const isSectionRow = Boolean(featObj && featObj.isSectionHeader);
                     const isHeaderRow = (r === 0 || r === 1);
+                    const useTopAlign = (r >= topAlignStartRow && !isSectionRow);
 
                     for (let c = 0; c < totalCols; c++) {
                         const cellRef = XLSX.utils.encode_cell({ r, c });
@@ -4782,7 +4833,7 @@
                             },
                             alignment: {
                                 wrapText: true,
-                                vertical: (hasImgInCell && cellTextVal) ? "top" : "center",
+                                vertical: (useTopAlign || (hasImgInCell && cellTextVal)) ? "top" : "center",
                                 horizontal: isCenterCell ? "center" : "left"
                             },
                             border: thinBorder
@@ -5320,8 +5371,8 @@
             const surplusRaw = getSpecAttr("Surplus Underwriting");
             const salesToolsSplit = splitTextAndImages(getSpecAttr("Sales Tools"));
             const afterSalesToolsSplit = splitTextAndImages(getSpecAttr("After Sales Tools"));
-            const isSyariahCat = p.category === "Syariah";
-            const isDplkCat = p.category === "DPLK";
+            const isSyariahCat = /^(sharia|syariah)$/i.test(p.category || "");
+            const isDplkCat = /^dplk$/i.test(p.category || "");
 
             // Separate regular benefits, DPLK benefit checklist, and Charges
             const regularBenefitCols = getRegularBenefitColumns();
@@ -5483,7 +5534,7 @@
                     
                     <div class="flex justify-between items-center mb-2">
                         <h5 class="font-bold text-blue-900 dark:text-blue-300 text-sm">Product Benefits</h5>
-                        <button type="button" onclick="addNewBenefitRow()" class="px-2.5 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm">
+                        <button type="button" onclick="addNewBenefitRow()" class="${isDplkCat ? 'hidden' : ''} px-2.5 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm">
                             <i class="fa-solid fa-plus"></i> Add Benefit
                         </button>
                     </div>
@@ -5501,25 +5552,49 @@
                                 <button type="button" onclick="toggleAllDplkBenefitCheckboxes('editDplkBenefitChecklist', false)" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition">Reset</button>
                             </div>
                         </div>
-                        <p class="text-[11px] text-gray-600 dark:text-gray-400">Check the pension benefits available in this DPLK product (automatically displayed with a <strong class="text-emerald-600 dark:text-emerald-400">✓</strong> badge and optional remark beside it in the comparison table):</p>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <p class="text-[11px] text-gray-600 dark:text-gray-400">Check the pension benefits available in this DPLK product and optionally type a note beside each checked benefit:</p>
+                        <div class="space-y-1.5">
                             ${DPLK_BENEFIT_COLUMNS.map(bCol => {
                 const actualKey = Object.keys(p.attributes).find(k => k.toLowerCase() === bCol.toLowerCase()) || bCol;
                 const dplkParsed = parseDplkBenefitValue(p.attributes[actualKey]);
                 const isChecked = dplkParsed.isChecked;
                 return `
-                                    <div class="dplk-benefit-item p-2 rounded-lg border border-emerald-200/80 dark:border-emerald-800/60 bg-white dark:bg-gray-800 hover:bg-emerald-50/40 dark:hover:bg-emerald-900/20 transition space-y-1.5">
-                                        <label class="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" class="dplk-benefit-chk w-4 h-4 rounded accent-emerald-600 cursor-pointer" data-benefit-col="${escapeHtmlAttr(bCol)}" ${isChecked ? 'checked' : ''} onchange="onDplkBenefitCheckboxChange('editDplkBenefitChecklist')">
+                                    <div class="dplk-benefit-item flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg border border-emerald-200/80 dark:border-emerald-800/60 bg-white dark:bg-gray-800 hover:bg-emerald-50/40 dark:hover:bg-emerald-900/20 transition">
+                                        <label class="flex items-center gap-2 cursor-pointer sm:w-5/12 shrink-0">
+                                            <input type="checkbox" class="dplk-benefit-chk w-4 h-4 rounded accent-emerald-600 cursor-pointer shrink-0" data-benefit-col="${escapeHtmlAttr(bCol)}" ${isChecked ? 'checked' : ''} onchange="onDplkBenefitCheckboxChange('editDplkBenefitChecklist')">
                                             <span class="text-xs font-medium text-gray-800 dark:text-gray-200">${escapeHtmlAttr(bCol)}</span>
                                         </label>
-                                        <input type="text" class="dplk-benefit-remark w-full border border-emerald-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded px-2 py-1 text-[11px] focus:ring-1 focus:ring-emerald-500 outline-none ${isChecked ? '' : 'hidden'}" data-benefit-col="${escapeHtmlAttr(bCol)}" value="${escapeHtmlAttr(dplkParsed.remark)}" placeholder="Add remark / note (optional)...">
+                                        <input type="text" ${isChecked ? '' : 'disabled'} class="dplk-benefit-remark flex-1 w-full rounded px-2.5 py-1.5 text-xs outline-none transition border ${isChecked ? 'bg-white dark:bg-gray-700 border-emerald-400 dark:border-emerald-500 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500' : 'bg-gray-100 dark:bg-gray-900/60 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 opacity-60 cursor-not-allowed'}" data-benefit-col="${escapeHtmlAttr(bCol)}" value="${escapeHtmlAttr(dplkParsed.remark)}" placeholder="Add note (optional)...">
                                     </div>
                                 `;
             }).join('')}
+                            <div class="dplk-custom-benefits-list space-y-1.5 empty:hidden">
+                                ${isDplkCat ? filledBenefitColumns.map(col => {
+                                    const rawCustom = p.attributes[col] || "";
+                                    const parsedCustom = parseDplkBenefitValue(rawCustom);
+                                    const customRemark = parsedCustom.isChecked ? parsedCustom.remark : splitTextAndImages(rawCustom).text;
+                                    return `
+                                        <div class="dplk-benefit-item dplk-custom-benefit-item flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-gray-800 transition">
+                                            <div class="flex items-center gap-2 sm:w-5/12 shrink-0">
+                                                <input type="checkbox" class="dplk-benefit-chk w-4 h-4 rounded accent-emerald-600 cursor-pointer shrink-0" checked onchange="onDplkBenefitCheckboxChange('editDplkBenefitChecklist')">
+                                                <input type="text" class="dplk-custom-benefit-name flex-1 min-w-0 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded px-2 py-1 text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none" value="${escapeHtmlAttr(col)}" placeholder="Benefit name..." oninput="onDplkBenefitCheckboxChange('editDplkBenefitChecklist')">
+                                                <button type="button" onclick="this.closest('.dplk-custom-benefit-item').remove(); onDplkBenefitCheckboxChange('editDplkBenefitChecklist');" class="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition px-1" title="Remove benefit">
+                                                    <i class="fa-solid fa-trash-can text-xs"></i>
+                                                </button>
+                                            </div>
+                                            <input type="text" class="dplk-benefit-remark flex-1 w-full rounded px-2.5 py-1.5 text-xs outline-none transition border bg-white dark:bg-gray-700 border-emerald-400 dark:border-emerald-500 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500" value="${escapeHtmlAttr(customRemark)}" placeholder="Add note (optional)...">
+                                        </div>
+                                    `;
+                                }).join('') : ''}
+                            </div>
                         </div>
+                        <button type="button" onclick="addDplkCustomBenefitRow('editDplkBenefitChecklist')" class="w-full py-1.5 border border-dashed border-emerald-400 dark:border-emerald-700 hover:border-emerald-500 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/30 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-circle-plus"></i> Add Benefit
+                        </button>
                     </div>
 
+                    <!-- Regular Benefits Section (Hidden for DPLK; DPLK uses unified checklist above) -->
+                    <div id="editRegularBenefitsSection" class="${isDplkCat ? 'hidden' : ''} space-y-2.5">
                     <!-- Datalist of existing benefit names -->
                     <datalist id="existingBenefitNamesList"></datalist>
 
@@ -5571,6 +5646,7 @@
                     <button type="button" onclick="addNewBenefitRow()" class="w-full py-2 border-2 border-dashed border-blue-300 dark:border-blue-700 hover:border-blue-500 dark:hover:border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-900/20 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 mt-2">
                         <i class="fa-solid fa-circle-plus"></i> Add Benefit
                     </button>
+                    </div>
 
                     <!-- DPLK CHARGES SECTION -->
                     <div id="editDplkChargesSection" class="${isDplkCat || filledChargeColumns.length > 0 ? '' : 'hidden'} pt-2 space-y-2.5">
@@ -5663,21 +5739,54 @@
         function onDplkBenefitCheckboxChange(containerId) {
             const container = document.getElementById(containerId);
             if (!container) return;
+            const activeClasses = ['bg-white', 'dark:bg-gray-700', 'border-emerald-400', 'dark:border-emerald-500', 'text-gray-900', 'dark:text-gray-100', 'focus:ring-2', 'focus:ring-emerald-500'];
+            const disabledClasses = ['bg-gray-100', 'dark:bg-gray-900/60', 'border-gray-200', 'dark:border-gray-700', 'text-gray-400', 'dark:text-gray-500', 'opacity-60', 'cursor-not-allowed'];
             container.querySelectorAll('.dplk-benefit-item').forEach(itemEl => {
                 const chk = itemEl.querySelector('.dplk-benefit-chk');
                 const remInput = itemEl.querySelector('.dplk-benefit-remark');
                 if (chk && remInput) {
-                    remInput.classList.toggle('hidden', !chk.checked);
+                    remInput.disabled = !chk.checked;
+                    if (chk.checked) {
+                        remInput.classList.remove(...disabledClasses);
+                        remInput.classList.add(...activeClasses);
+                    } else {
+                        remInput.classList.remove(...activeClasses);
+                        remInput.classList.add(...disabledClasses);
+                    }
                 }
             });
+            const allCount = container.querySelectorAll('.dplk-benefit-chk').length;
             const checkedCount = container.querySelectorAll('.dplk-benefit-chk:checked').length;
             const badgeId = containerId === 'manualDplkBenefitChecklist' ? 'manualDplkChecklistCount' : 'editDplkChecklistCount';
             const badgeEl = document.getElementById(badgeId);
             if (badgeEl) {
-                badgeEl.textContent = `${checkedCount} / ${DPLK_BENEFIT_COLUMNS.length} selected`;
+                badgeEl.textContent = `${checkedCount} / ${allCount} selected`;
             }
             const scopeRoot = container.closest('#manualFormBody, #detailBody') || document;
             refreshBenefitDatalist(scopeRoot);
+        }
+
+        function addDplkCustomBenefitRow(containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            const listEl = container.querySelector('.dplk-custom-benefits-list');
+            if (!listEl) return;
+            const row = document.createElement('div');
+            row.className = "dplk-benefit-item dplk-custom-benefit-item flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-gray-800 transition";
+            row.innerHTML = `
+                <div class="flex items-center gap-2 sm:w-5/12 shrink-0">
+                    <input type="checkbox" class="dplk-benefit-chk w-4 h-4 rounded accent-emerald-600 cursor-pointer shrink-0" checked onchange="onDplkBenefitCheckboxChange('${containerId}')">
+                    <input type="text" class="dplk-custom-benefit-name flex-1 min-w-0 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded px-2 py-1 text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none" placeholder="Benefit name..." oninput="onDplkBenefitCheckboxChange('${containerId}')">
+                    <button type="button" onclick="this.closest('.dplk-custom-benefit-item').remove(); onDplkBenefitCheckboxChange('${containerId}');" class="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition px-1" title="Remove benefit">
+                        <i class="fa-solid fa-trash-can text-xs"></i>
+                    </button>
+                </div>
+                <input type="text" class="dplk-benefit-remark flex-1 w-full rounded px-2.5 py-1.5 text-xs outline-none transition border bg-white dark:bg-gray-700 border-emerald-400 dark:border-emerald-500 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500" placeholder="Add note (optional)...">
+            `;
+            listEl.appendChild(row);
+            onDplkBenefitCheckboxChange(containerId);
+            const nameInput = row.querySelector('.dplk-custom-benefit-name');
+            if (nameInput) nameInput.focus();
         }
 
         function toggleAllDplkBenefitCheckboxes(containerId, checkedState) {
@@ -6432,14 +6541,15 @@
             if (newCategory === "DPLK") {
                 const checkedBoxes = Array.from(detailBodyEl.querySelectorAll('.dplk-benefit-chk:checked'));
                 checkedBoxes.forEach(chk => {
-                    const bCol = chk.getAttribute('data-benefit-col');
+                    const itemEl = chk.closest('.dplk-benefit-item');
+                    const customNameInput = itemEl ? itemEl.querySelector('.dplk-custom-benefit-name') : null;
+                    const bCol = customNameInput ? customNameInput.value.trim() : chk.getAttribute('data-benefit-col');
                     if (!bCol) return;
                     const actualCol = dynamicColumns.find(c => c.toLowerCase() === bCol.toLowerCase()) || bCol;
                     if (!dynamicColumns.includes(actualCol)) {
                         const insertIdx = Math.min(5, dynamicColumns.length);
                         dynamicColumns.splice(insertIdx, 0, actualCol);
                     }
-                    const itemEl = chk.closest('.dplk-benefit-item');
                     const remInput = itemEl ? itemEl.querySelector('.dplk-benefit-remark') : null;
                     const remVal = remInput ? remInput.value.trim() : "";
                     updatedAttr[actualCol] = remVal ? `✓ | ${remVal}` : "✓";
@@ -7003,20 +7113,25 @@
                             <button type="button" onclick="toggleAllDplkBenefitCheckboxes('manualDplkBenefitChecklist', false)" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition">Reset</button>
                         </div>
                     </div>
-                    <p class="text-[11px] text-gray-600 dark:text-gray-400">Check the pension benefits available in this DPLK product (automatically displayed with a <strong class="text-emerald-600 dark:text-emerald-400">✓</strong> badge and optional remark beside it in the comparison table):</p>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <p class="text-[11px] text-gray-600 dark:text-gray-400">Check the pension benefits available in this DPLK product and optionally type a note beside each checked benefit:</p>
+                    <div class="space-y-1.5">
                         ${DPLK_BENEFIT_COLUMNS.map(bCol => `
-                            <div class="dplk-benefit-item p-2 rounded-lg border border-emerald-200/80 dark:border-emerald-800/60 bg-white dark:bg-gray-800 hover:bg-emerald-50/40 dark:hover:bg-emerald-900/20 transition space-y-1.5">
-                                <label class="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" class="dplk-benefit-chk w-4 h-4 rounded accent-emerald-600 cursor-pointer" data-benefit-col="${escapeHtmlAttr(bCol)}" onchange="onDplkBenefitCheckboxChange('manualDplkBenefitChecklist')">
+                            <div class="dplk-benefit-item flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg border border-emerald-200/80 dark:border-emerald-800/60 bg-white dark:bg-gray-800 hover:bg-emerald-50/40 dark:hover:bg-emerald-900/20 transition">
+                                <label class="flex items-center gap-2 cursor-pointer sm:w-5/12 shrink-0">
+                                    <input type="checkbox" class="dplk-benefit-chk w-4 h-4 rounded accent-emerald-600 cursor-pointer shrink-0" data-benefit-col="${escapeHtmlAttr(bCol)}" onchange="onDplkBenefitCheckboxChange('manualDplkBenefitChecklist')">
                                     <span class="text-xs font-medium text-gray-800 dark:text-gray-200">${escapeHtmlAttr(bCol)}</span>
                                 </label>
-                                <input type="text" class="dplk-benefit-remark w-full border border-emerald-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded px-2 py-1 text-[11px] focus:ring-1 focus:ring-emerald-500 outline-none hidden" data-benefit-col="${escapeHtmlAttr(bCol)}" placeholder="Add remark / note (optional)...">
+                                <input type="text" disabled class="dplk-benefit-remark flex-1 w-full rounded px-2.5 py-1.5 text-xs outline-none transition border bg-gray-100 dark:bg-gray-900/60 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 opacity-60 cursor-not-allowed" data-benefit-col="${escapeHtmlAttr(bCol)}" placeholder="Add note (optional)...">
                             </div>
                         `).join('')}
+                        <div class="dplk-custom-benefits-list space-y-1.5 empty:hidden"></div>
                     </div>
+                    <button type="button" onclick="addDplkCustomBenefitRow('manualDplkBenefitChecklist')" class="w-full py-1.5 border border-dashed border-emerald-400 dark:border-emerald-700 hover:border-emerald-500 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/30 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-circle-plus"></i> Add Benefit
+                    </button>
                 </div>
 
+                <div id="manualRegularBenefitsSection" class="${isDplkCat ? 'hidden' : ''} space-y-2.5">
                 <datalist id="manualBenefitNamesList">${datalistOptions}</datalist>
 
                 <div id="manualEmptyBenefitNotice" class="text-center py-4 bg-gray-50 dark:bg-gray-700/40 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400">
@@ -7028,6 +7143,7 @@
                 <button type="button" onclick="addNewBenefitRow('manualNewBenefitsContainer', 'manualEmptyBenefitNotice')" class="w-full py-2 border-2 border-dashed border-blue-300 dark:border-blue-700 hover:border-blue-500 dark:hover:border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-900/20 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 mt-2">
                     <i class="fa-solid fa-circle-plus"></i> Add Benefit
                 </button>
+                </div>
 
                 <!-- DPLK CHARGES SECTION -->
                 <div id="manualDplkChargesSection" class="${isDplkCat ? '' : 'hidden'} pt-2 space-y-2.5">
@@ -7119,9 +7235,11 @@
 
             const isSharia = /^(sharia|syariah)$/i.test(matchedTab || "");
             const isDplk = /^dplk$/i.test(matchedTab || "");
+            const manualRegBenefitsSec = document.getElementById("manualRegularBenefitsSection");
             if (syariahSec) syariahSec.classList.toggle("hidden", !isSharia);
             if (dplkSpecSec) dplkSpecSec.classList.toggle("hidden", !isDplk);
             if (dplkChecklist) dplkChecklist.classList.toggle("hidden", !isDplk);
+            if (manualRegBenefitsSec) manualRegBenefitsSec.classList.toggle("hidden", isDplk);
             if (dplkChargesSec) dplkChargesSec.classList.toggle("hidden", !isDplk);
             if (minPremLabel) minPremLabel.textContent = isDplk ? "Min Premium / Contribution" : "Min Premium";
             if (manualEmptyNotice) {
@@ -7310,14 +7428,15 @@
             if (targetCategory === "DPLK") {
                 const checkedBoxes = Array.from(manualFormEl.querySelectorAll('.dplk-benefit-chk:checked'));
                 checkedBoxes.forEach(chk => {
-                    const bCol = chk.getAttribute('data-benefit-col');
+                    const itemEl = chk.closest('.dplk-benefit-item');
+                    const customNameInput = itemEl ? itemEl.querySelector('.dplk-custom-benefit-name') : null;
+                    const bCol = customNameInput ? customNameInput.value.trim() : chk.getAttribute('data-benefit-col');
                     if (!bCol) return;
                     const actualCol = dynamicColumns.find(c => c.toLowerCase() === bCol.toLowerCase()) || bCol;
                     if (!dynamicColumns.includes(actualCol)) {
                         const insertIdx = Math.min(5, dynamicColumns.length);
                         dynamicColumns.splice(insertIdx, 0, actualCol);
                     }
-                    const itemEl = chk.closest('.dplk-benefit-item');
                     const remInput = itemEl ? itemEl.querySelector('.dplk-benefit-remark') : null;
                     const remVal = remInput ? remInput.value.trim() : "";
                     updatedAttr[actualCol] = remVal ? `✓ | ${remVal}` : "✓";
