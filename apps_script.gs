@@ -48,17 +48,492 @@ function getOrCreateRootDocFolder() {
   return rootFolder;
 }
 
+// Helper: Baca seluruh tab produk sekaligus via Google Sheets Advanced Service (batchGet),
+// atau fallback otomatis ke sheet.getDataRange().getDisplayValues() jika Sheets API belum diaktifkan.
+function readSheetsBatchOrFallback_(ss, tabNames) {
+  const allSheets = ss.getSheets();
+  const sheetByLowerName = {};
+  allSheets.forEach(function(s) {
+    sheetByLowerName[String(s.getName() || "").trim().toLowerCase()] = s;
+  });
+
+  const resultMap = {};
+  const existingTabs = [];
+
+  tabNames.forEach(function(tabName) {
+    const exact = ss.getSheetByName(tabName) || sheetByLowerName[String(tabName || "").trim().toLowerCase()] || null;
+    if (!exact) {
+      resultMap[tabName] = { exists: false, values: [] };
+    } else {
+      existingTabs.push({ tabName: tabName, sheet: exact, actualName: exact.getName() });
+    }
+  });
+
+  if (existingTabs.length === 0) {
+    return resultMap;
+  }
+
+  // Coba batch read 1x panggilan via Google Sheets Advanced Service
+  if (typeof Sheets !== "undefined" && Sheets.Spreadsheets && Sheets.Spreadsheets.Values && typeof Sheets.Spreadsheets.Values.batchGet === "function") {
+    try {
+      const ranges = existingTabs.map(function(item) {
+        const escaped = String(item.actualName || "").replace(/'/g, "''");
+        return "'" + escaped + "'!A1:ZZ1000";
+      });
+      const batchRes = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {
+        ranges: ranges,
+        valueRenderOption: "FORMATTED_VALUE"
+      });
+      const valueRanges = (batchRes && Array.isArray(batchRes.valueRanges)) ? batchRes.valueRanges : [];
+      if (valueRanges.length === existingTabs.length) {
+        existingTabs.forEach(function(item, idx) {
+          const rawVals = (valueRanges[idx] && Array.isArray(valueRanges[idx].values)) ? valueRanges[idx].values : [];
+          if (rawVals.length === 0) {
+            resultMap[item.tabName] = { exists: true, values: [] };
+            return;
+          }
+          const headerLen = (rawVals[0] || []).length;
+          const padded = rawVals.map(function(row) {
+            const out = new Array(headerLen);
+            for (let c = 0; c < headerLen; c++) {
+              out[c] = (row && row[c] !== undefined && row[c] !== null) ? String(row[c]) : "";
+            }
+            return out;
+          });
+          resultMap[item.tabName] = { exists: true, values: padded };
+        });
+        return resultMap;
+      }
+    } catch (batchErr) {
+      console.warn("Sheets.Spreadsheets.Values.batchGet fallback ke SpreadsheetApp:", batchErr);
+    }
+  }
+
+  // Fallback standar SpreadsheetApp per tab
+  existingTabs.forEach(function(item) {
+    const sheet = item.sheet;
+    if (sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+      resultMap[item.tabName] = { exists: true, values: [] };
+      return;
+    }
+    resultMap[item.tabName] = {
+      exists: true,
+      values: sheet.getDataRange().getDisplayValues()
+    };
+  });
+
+  return resultMap;
+}
+
+// Helper: Pangkas baris sheet menjadi payload ringkas (mode="summary") untuk render cepat kartu awal.
+// Hanya menyertakan kolom identitas inti + 1 snippet manfaat preview (atau flag "✓" untuk DPLK).
+function buildSummaryRowsForSheet_(tabName, headers, rows, nonBenefitColumns) {
+  const CORE_COLS_LOWER = {
+    "product name": true,
+    "company name": true,
+    "launch date": true,
+    "tanggal rilis": true,
+    "distribution channel": true,
+    "currency": true,
+    "product type": true,
+    "par/non par": true,
+    "underwriting method": true
+  };
+
+  const STANDARD_NON_BENEFIT_LOWER = {
+    "launch date": true,
+    "tanggal rilis": true,
+    "additional benefit": true,
+    "aqd": true,
+    "akad": true,
+    "aqd / akad": true,
+    "alokasi kontribusi": true,
+    "surplus underwriting": true,
+    "entry age": true,
+    "coverage period": true,
+    "premium payment period (ppp)": true,
+    "min premium": true,
+    "min sum assured": true,
+    "underwriting method": true,
+    "available riders": true,
+    "sales tools": true,
+    "after sales tools": true,
+    "remarks": true
+  };
+
+  const customNonBenefitLower = {};
+  (nonBenefitColumns || []).forEach(function(nb) {
+    const lw = String(nb || "").trim().toLowerCase();
+    if (lw) customNonBenefitLower[lw] = true;
+  });
+
+  const isDplkTab = /^dplk$/i.test(String(tabName || "").trim());
+  const colMeta = headers.map(function(h) {
+    const clean = String(h || "").trim();
+    const lower = clean.toLowerCase();
+    const isCont = /\[\d+\]$/.test(clean);
+    const isCore = Boolean(CORE_COLS_LOWER[lower]);
+    const isNonBen = Boolean(STANDARD_NON_BENEFIT_LOWER[lower] || customNonBenefitLower[lower]);
+    const isCharge = /^biaya\b/i.test(lower);
+    const isBenefit = Boolean(clean) && !isCore && !isCont && !isNonBen && !isCharge;
+    return {
+      lower: lower,
+      isCore: isCore,
+      isBenefit: isBenefit,
+      isDeathBenefit: isBenefit && lower.indexOf("death benefit") !== -1
+    };
+  });
+
+  const isMeaningfulCell = function(val) {
+    const s = String(val === undefined || val === null ? "" : val).trim();
+    if (!s || s === "-" || /^n\/?a\.?$/i.test(s) || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") {
+      return false;
+    }
+    return true;
+  };
+
+  const stripImgTokens = function(val) {
+    return String(val || "")
+      .replace(/\[IMG_ID:[^\]]+\]/gi, "")
+      .replace(/\[IMG:[^\]]+\]/gi, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
+
+  return rows.map(function(row) {
+    const out = new Array(headers.length);
+    for (let c = 0; c < headers.length; c++) {
+      const meta = colMeta[c];
+      const rawCell = (row && row[c] !== undefined && row[c] !== null) ? String(row[c]) : "";
+      if (meta && meta.isCore) {
+        out[c] = rawCell;
+      } else if (isDplkTab && meta && meta.isBenefit) {
+        const trimmed = rawCell.trim();
+        const isChecked = /^(✓|✅)/.test(trimmed) || /^(v|check|checked)(?=\s*$|\s*\||\s*:|\r?\n)/i.test(trimmed);
+        out[c] = isChecked ? "✓" : "";
+      } else {
+        out[c] = "";
+      }
+    }
+
+    if (!isDplkTab) {
+      let chosenIdx = -1;
+      let chosenCleanText = "";
+
+      for (let c = 0; c < headers.length; c++) {
+        if (!colMeta[c] || !colMeta[c].isDeathBenefit) continue;
+        const rawVal = (row && row[c] !== undefined && row[c] !== null) ? String(row[c]) : "";
+        if (!isMeaningfulCell(rawVal)) continue;
+        const stripped = stripImgTokens(rawVal);
+        if (isMeaningfulCell(stripped)) {
+          chosenIdx = c;
+          chosenCleanText = stripped;
+          break;
+        }
+      }
+
+      if (chosenIdx === -1) {
+        for (let c = 0; c < headers.length; c++) {
+          if (!colMeta[c] || !colMeta[c].isBenefit) continue;
+          const rawVal = (row && row[c] !== undefined && row[c] !== null) ? String(row[c]) : "";
+          if (!isMeaningfulCell(rawVal)) continue;
+          const stripped = stripImgTokens(rawVal);
+          if (isMeaningfulCell(stripped)) {
+            chosenIdx = c;
+            chosenCleanText = stripped;
+            break;
+          }
+        }
+      }
+
+      if (chosenIdx !== -1 && chosenCleanText) {
+        out[chosenIdx] = chosenCleanText.length > 240
+          ? chosenCleanText.slice(0, 240) + "..."
+          : chosenCleanText;
+      }
+    }
+
+    return out;
+  });
+}
+
+// ====================================================
+// DEFAULT KONFIGURASI SHEET 'Config' (4 KOLOM: Kategori | Nama Utama | Nilai / Nama Lain | Keterangan)
+// Mudah diedit oleh orang awam langsung dari Google Sheets tanpa perlu mengubah kode function.
+// ====================================================
+const CONFIG_HEADERS_4COL_ = ["Kategori", "Nama Utama", "Nilai / Nama Lain", "Keterangan"];
+
+const DEFAULT_CONFIG_ROWS_ = [
+  // 1. Pengaturan Sistem
+  ["Setting", "Drive Folder ID", "", "ID folder utama Google Drive tempat menyimpan dokumen produk (kosongkan untuk otomatis memakai folder IDCM Test)"],
+  ["Setting", "Invite Code", "IDCM2026", "Kode akses rahasia untuk pendaftaran akun baru (Sign Up)"],
+
+  // 2. Daftar Sheet / Kategori Produk
+  ["Sheet", "Conventional", "Traditional, Konven", "Nama tab sheet produk konvensional di Master Spreadsheet"],
+  ["Sheet", "Sharia", "Syariah", "Nama tab sheet produk syariah di Master Spreadsheet"],
+  ["Sheet", "Health & Surgical", "Health, Kesehatan", "Nama tab sheet produk kesehatan di Master Spreadsheet"],
+  ["Sheet", "DPLK", "Dana Pensiun", "Nama tab sheet produk DPLK di Master Spreadsheet"],
+
+  // 3. Kolom Identitas Inti (Core)
+  ["Core", "Product Name", "Nama Produk", "Kolom identitas utama nama produk"],
+  ["Core", "Company Name", "Nama Perusahaan, Company", "Kolom identitas nama perusahaan asuransi"],
+  ["Core", "Par/Non Par", "Par / Non Par", "Kategori partisipasi produk (Participating / Non-Participating)"],
+  ["Core", "Product Type", "Tipe Produk", "Jenis produk asuransi (Whole Life, Term Life, Endowment, Unit Link, dll.)"],
+  ["Core", "Distribution Channel", "Channel Distribution", "Jalur distribusi pemasaran produk"],
+  ["Core", "Currency", "Mata Uang", "Mata uang polis (IDR, USD, dll.)"],
+  ["Core", "Launch Date", "Tanggal Rilis, Launching Date, Release Date", "Tanggal atau tahun peluncuran produk"],
+  ["Core", "Remarks", "Catatan", "Catatan tambahan produk"],
+
+  // 4. Kolom Non-Benefit (Ketentuan Produk Umum — Di-lock / Tidak dihapus otomatis)
+  ["Non-Benefit", "Entry Age", "Insured Entry Age, Age Definition, Usia Masuk", "Ketentuan usia masuk tertanggung / pemegang polis"],
+  ["Non-Benefit", "Coverage Period", "Coverage Term, Masa Pertanggungan", "Masa pertanggungan asuransi"],
+  ["Non-Benefit", "Premium Payment Period (PPP)", "PPP, Premium Payment Period, Premium Term, Masa Pembayaran Premi", "Masa pembayaran premi / kontribusi"],
+  ["Non-Benefit", "Min Premium", "Premium (Iuran), Iuran, Premium Limit, Minimum Premium, Premium", "Ketentuan minimum premi / iuran"],
+  ["Non-Benefit", "Min Sum Assured", "Sum Assured Limit, Minimum Sum Assured, Sum Assured", "Ketentuan minimum uang pertanggungan (UP)"],
+  ["Non-Benefit", "Underwriting Method", "Underwriting", "Metode seleksi risiko / underwriting (GIO, SIO, Full Underwriting, NMU)"],
+  ["Non-Benefit", "Available Riders", "Available Rider, Riders, Rider", "Daftar asuransi tambahan (Rider) yang tersedia"],
+  ["Non-Benefit", "Additional Benefit", "Additional Feature (if any), Additional Feature, Additional Features, Other Benefit, Other Feature, Fitur Tambahan", "Fitur atau manfaat tambahan di luar manfaat utama"],
+
+  // 5. Kolom Non-Benefit Khusus Syariah & DPLK (Di-lock / Tidak dihapus otomatis)
+  ["Non-Benefit (Syariah)", "Aqd", "Akad, Aqd / Akad, Akad / Aqd", "Jenis akad produk Syariah"],
+  ["Non-Benefit (Syariah)", "Alokasi Kontribusi", "Tabarru, Tanahud, Ujrah, Nisbah", "Ketentuan alokasi kontribusi / dana Tabarru & Ujrah Syariah"],
+  ["Non-Benefit (Syariah)", "Surplus Underwriting", "Underwriting Surplus", "Ketentuan pembagian surplus underwriting Syariah"],
+  ["Non-Benefit (DPLK)", "Sales Tools", "Sales Tool", "Alat bantu penjualan khusus produk DPLK"],
+  ["Non-Benefit (DPLK)", "After Sales Tools", "After Sales Tool", "Alat bantu layanan purna jual khusus produk DPLK"],
+
+  // 6. Daftar Benefit Umum & Nama Lainnya (Otomatis dihapus jika sudah tidak dipakai produk mana pun)
+  ["Benefit", "Death Benefit", "Death Benefits, DB", "Manfaat meninggal dunia"],
+  ["Benefit", "Accidental Death Benefit", "Accident Death Benefit, Accidental Death Benefits, ADB", "Manfaat meninggal dunia akibat kecelakaan"],
+  ["Benefit", "Accident Death During Hajj (Pilgrim) Benefit", "Hajj Death Benefit", "Manfaat meninggal dunia saat menunaikan ibadah Haji / Umrah"],
+  ["Benefit", "Total Permanent Disability Benefit", "TPD, Total Permanent Disability, TPD Benefit", "Manfaat cacat tetap total"],
+  ["Benefit", "Terminal Illness Benefit", "Terminal Illness", "Manfaat penyakit terminal"],
+  ["Benefit", "Critical Illness Benefit", "CI Benefit, CI Benefits, Critical Illness", "Manfaat penyakit kritis"],
+  ["Benefit", "Additional Death Benefit", "Additional Death Benefits", "Manfaat tambahan meninggal dunia"],
+  ["Benefit", "Maturity Benefit", "Maturity Benefits", "Manfaat akhir masa polis / jatuh tempo"],
+  ["Benefit", "Cash Payout Bonus", "Cash Payout Benefit", "Manfaat tahapan / pembayaran tunai berkala"],
+  ["Benefit", "Sum Assured Bonus", "SA Bonus, Sum Assured Benefit", "Bonus uang pertanggungan"],
+  ["Benefit", "Loyalty Bonus", "Bonus Loyalitas", "Manfaat bonus loyalitas polis"],
+  ["Benefit", "Booster Benefit", "Investment Booster", "Manfaat booster nilai investasi / uang pertanggungan"],
+  ["Benefit", "Survival Benefit", "Manfaat Hidup", "Manfaat hidup berkala"],
+  ["Benefit", "Manfaat Dana Tahapan", "Dana Tahapan", "Manfaat pembayaran dana tahapan terjadwal"],
+  ["Benefit", "Education Fund Benefit", "Manfaat Dana Pendidikan", "Manfaat dana tahapan pendidikan"],
+  ["Benefit", "Hospitalization Benefit", "Rawat Inap", "Manfaat santunan rawat inap rumah sakit"],
+  ["Benefit", "Premium Waiver", "Waiver of Premium", "Manfaat pembebasan premi"],
+  ["Benefit", "Remaining Premium Waived", "Waived Remaining Premium", "Manfaat pembebasan sisa premi yang belum jatuh tempo"],
+
+  // 7. Daftar Benefit Khusus DPLK (Mode Checklist "✓")
+  ["Benefit (DPLK)", "Pensiun Normal", "pensiun normal, normal", "Manfaat pensiun normal (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun Ditunda", "pensiun ditunda, dana pensiun ditunda, ditunda", "Manfaat pensiun ditunda (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun Cacat / Disabilitas", "cacat, disabilitas", "Manfaat pensiun karena cacat / disabilitas (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun Dipercepat", "dipercepat", "Manfaat pensiun dipercepat (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun Resign / Berhenti Kerja", "resign, berhenti, phk", "Manfaat saat resign / berhenti kerja (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun Meninggal Dunia", "meninggal, janda, duda", "Manfaat pensiun meninggal dunia / janda / duda (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun WNI Pindah Kewarganegaraan", "wni, kewarganegaraan", "Manfaat bagi WNI yang pindah kewarganegaraan (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun WNA Kembali ke Negara Asal", "wna, negara asal, expatriate, ekspatriat", "Manfaat bagi WNA kembali ke negara asal (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pensiun Sakit Keras", "sakit keras, kritis", "Manfaat pensiun karena sakit keras (checklist DPLK)"],
+  ["Benefit (DPLK)", "Pengalihan ke DPLK Lain", "pengalihan dplk", "Fasilitas pengalihan dana ke DPLK lain (checklist DPLK)"],
+  ["Benefit (DPLK)", "Manfaat Lain (Dana Kompensasi Pasca Kerja)", "manfaat lain, kompensasi pasca kerja, dkp, asuransi tambahan, penarikan", "Manfaat tambahan / DKP pasca kerja (checklist DPLK)"],
+
+  // 8. Daftar Komponen Biaya DPLK
+  ["Biaya (DPLK)", "Biaya Pendaftaran", "pendaftaran, kepesertaan baru, registrasi", "Komponen biaya pendaftaran peserta baru DPLK"],
+  ["Biaya (DPLK)", "Biaya Administrasi Kepesertaan", "administrasi, administration, biaya admin", "Komponen biaya administrasi kepesertaan DPLK"],
+  ["Biaya (DPLK)", "Biaya Administrasi Iuran", "iuran, kontribusi, top up", "Komponen biaya administrasi atas iuran / kontribusi DPLK"],
+  ["Biaya (DPLK)", "Biaya Pengelolaan Dana Peserta", "pengelolaan", "Komponen biaya pengelolaan dana peserta DPLK"],
+  ["Biaya (DPLK)", "Biaya Perubahan Pilihan Investasi (Switching)", "perubahan, switching, pengalihan investasi, pengalihan paket", "Komponen biaya perubahan paket investasi (switching) DPLK"],
+  ["Biaya (DPLK)", "Biaya Penarikan Sebagian Iuran", "penarikan", "Komponen biaya penarikan sebagian dana iuran DPLK"],
+  ["Biaya (DPLK)", "Biaya Administrasi Pembayaran Manfaat Pensiun", "pembayaran manfaat, pencairan", "Komponen biaya administrasi pencairan manfaat pensiun DPLK"],
+  ["Biaya (DPLK)", "Biaya Pengelolaan Investasi", "pengelolaan investasi, biaya investasi, management fee", "Komponen biaya pengelolaan investasi (management fee) DPLK"],
+  ["Biaya (DPLK)", "Biaya Pengalihan Dana ke DPLK Lain", "pengalihan, transfer ke dplk", "Komponen biaya transfer kepesertaan ke DPLK lain"],
+  ["Biaya (DPLK)", "Biaya Pencetakan Laporan Rekening", "pencetakan, laporan", "Komponen biaya pencetakan laporan rekening DPLK"],
+  ["Biaya (DPLK)", "Biaya Kartu Kepesertaan", "kartu, buku", "Komponen biaya pembuatan kartu / buku kepesertaan DPLK"],
+  ["Biaya (DPLK)", "Biaya Penghentian Kerja Sama / Pemutusan", "penghentian, pemutusan, penutupan, terminasi", "Komponen biaya penutupan / pemutusan kepesertaan DPLK"],
+  ["Biaya (DPLK)", "Biaya Lain (Pihak Ketiga)", "pihak ketiga, kustodian, pajak, materai, biaya lain", "Komponen biaya pihak ketiga (kustodian, pajak, materai, dll.)"],
+
+  // 9. Pengelompokan Filter Distribution Channel
+  ["Filter Channel", "Bancassurance", "banca, bancassurance", "Kelompok filter jalur distribusi Bank (Bancassurance)"],
+  ["Filter Channel", "Agency", "agency, agen", "Kelompok filter jalur distribusi Keagenan (Agency)"],
+  ["Filter Channel", "Direct", "direct, digital", "Kelompok filter jalur distribusi Langsung / Digital"],
+  ["Filter Channel", "Financial Advisor", "financial advisor, fa", "Kelompok filter jalur distribusi Financial Advisor"],
+  ["Filter Channel", "Telemarketing", "telemarketing, tele", "Kelompok filter jalur distribusi Telemarketing"],
+  ["Filter Channel", "Corporate", "corporate, group, kumpulan, employee benefit", "Kelompok filter jalur distribusi Korporasi / Kumpulan"],
+
+  // 10. Pengelompokan Filter Underwriting Method
+  ["Filter Underwriting", "GIO", "gio, guaranteed issue offer, guaranteed issuance", "Kelompok filter Underwriting Guaranteed Issue Offer (GIO)"],
+  ["Filter Underwriting", "SIO", "sio, simplified issue offer, simplified issuance", "Kelompok filter Underwriting Simplified Issue Offer (SIO)"],
+  ["Filter Underwriting", "Full Underwriting", "full underwriting, fuw, full uw", "Kelompok filter Full Underwriting"],
+  ["Filter Underwriting", "NMU / Non-Medical", "nmu, non-medical, non medical", "Kelompok filter Non-Medical Underwriting (NMU)"],
+  ["Filter Underwriting", "Medical Underwriting", "medical", "Kelompok filter Medical Underwriting"],
+  ["Filter Underwriting", "Clean Case", "clean case", "Kelompok filter Clean Case"],
+
+  // 11. Kata Kunci Deteksi Otomatis Nama Perusahaan dari Nama Produk saat Upload Excel
+  ["Company Keyword", "Astra Life", "ava, astra, asli, asuransi jiwa astra", "Kata kunci deteksi otomatis perusahaan Astra Life dari nama produk"],
+  ["Company Keyword", "Manulife", "manulife", "Kata kunci deteksi otomatis perusahaan Manulife dari nama produk"],
+  ["Company Keyword", "AIA", "aia", "Kata kunci deteksi otomatis perusahaan AIA dari nama produk"],
+  ["Company Keyword", "Allianz", "allianz, allisya", "Kata kunci deteksi otomatis perusahaan Allianz dari nama produk"],
+  ["Company Keyword", "Prudential", "pru, prudential", "Kata kunci deteksi otomatis perusahaan Prudential dari nama produk"],
+  ["Company Keyword", "AXA", "mandiri, axa, maestro", "Kata kunci deteksi otomatis perusahaan AXA / AXA Mandiri dari nama produk"],
+  ["Company Keyword", "FWD", "fwd", "Kata kunci deteksi otomatis perusahaan FWD dari nama produk"],
+  ["Company Keyword", "Great Eastern", "great, great eastern", "Kata kunci deteksi otomatis perusahaan Great Eastern dari nama produk"],
+  ["Company Keyword", "Generali", "generali, isalaam", "Kata kunci deteksi otomatis perusahaan Generali dari nama produk"],
+  ["Company Keyword", "Sunlife", "sun, sunlife, salam, berkah", "Kata kunci deteksi otomatis perusahaan Sun Life dari nama produk"]
+];
+
+function getDefaultConfigDescription_(category, canonicalName) {
+  const catLower = String(category || "").trim().toLowerCase();
+  const nameKey = normalizeBenefitAliasKey_(canonicalName);
+  for (let i = 0; i < DEFAULT_CONFIG_ROWS_.length; i++) {
+    const dRow = DEFAULT_CONFIG_ROWS_[i];
+    if (String(dRow[0]).toLowerCase() === catLower && normalizeBenefitAliasKey_(dRow[1]) === nameKey) {
+      return dRow[3];
+    }
+  }
+  if (catLower === "benefit") return "Manfaat produk (otomatis dihapus jika tidak ada produk yang menggunakan)";
+  if (catLower === "benefit (dplk)") return "Manfaat pensiun DPLK (mode checklist)";
+  if (catLower === "biaya (dplk)") return "Komponen biaya DPLK";
+  if (catLower.indexOf("non-benefit") === 0) return "Ketentuan produk Non-Benefit (di-lock / tidak dihapus otomatis)";
+  if (catLower === "core") return "Kolom identitas utama produk";
+  if (catLower === "sheet" || catLower === "tab" || catLower === "kategori" || catLower === "category") return "Nama tab sheet kategori produk di Master Spreadsheet";
+  if (catLower === "filter channel") return "Pengelompokan filter Distribution Channel";
+  if (catLower === "filter underwriting") return "Pengelompokan filter Underwriting Method";
+  if (catLower === "company keyword") return "Kata kunci deteksi nama perusahaan dari nama produk";
+  if (catLower === "setting") return "Pengaturan sistem aplikasi";
+  return "";
+}
+
+// Fungsi inisialisasi / pelengkap otomatis Sheet Config (4 Kolom) tanpa menimpa data/alias yang sudah diedit user
+function ensureDefaultConfigSheet_(ss, forceSeedAll) {
+  const targetSs = ss || SpreadsheetApp.getActiveSpreadsheet();
+  let configSheet = targetSs.getSheetByName("Config");
+  if (!configSheet) {
+    configSheet = targetSs.insertSheet("Config");
+  }
+
+  const lastRow = configSheet.getLastRow();
+  const lastCol = configSheet.getLastColumn();
+
+  if (lastRow === 0 || lastCol === 0) {
+    const allRows = [CONFIG_HEADERS_4COL_].concat(DEFAULT_CONFIG_ROWS_);
+    const range = configSheet.getRange(1, 1, allRows.length, 4);
+    range.setNumberFormat("@");
+    range.setValues(allRows);
+    configSheet.getRange(1, 1, 1, 4).setFontWeight("bold");
+    return configSheet;
+  }
+
+  const readCols = Math.max(4, lastCol);
+  const rawValues = configSheet.getRange(1, 1, lastRow, readCols).getDisplayValues();
+  const h0 = String(rawValues[0][0] || "").trim();
+  const h1 = String(rawValues[0][1] || "").trim();
+  const h2 = String(rawValues[0][2] || "").trim();
+  const h3 = String(rawValues[0][3] || "").trim();
+
+  // Perbarui baris header ke 4 kolom bahasa Indonesia jika masih memakai format 3 kolom lama
+  if (h0 !== CONFIG_HEADERS_4COL_[0] || h1 !== CONFIG_HEADERS_4COL_[1] || h2 !== CONFIG_HEADERS_4COL_[2] || h3 !== CONFIG_HEADERS_4COL_[3]) {
+    configSheet.getRange(1, 1, 1, 4).setValues([CONFIG_HEADERS_4COL_]);
+    configSheet.getRange(1, 1, 1, 4).setFontWeight("bold");
+  }
+
+  // Cek apakah kategori-kategori baru sudah pernah di-seed ke sheet Config
+  const existingKeys = {};
+  const existingCategories = {};
+  let hasBlankDescriptions = false;
+
+  for (let r = 1; r < rawValues.length; r++) {
+    const catRaw = String(rawValues[r][0] || "").trim();
+    const nameRaw = String(rawValues[r][1] || "").trim();
+    const descRaw = String(rawValues[r][3] || "").trim();
+    if (!catRaw || !nameRaw) continue;
+    const catLower = catRaw.toLowerCase();
+    const normCat = (catLower === "tab" || catLower === "kategori" || catLower === "category") ? "sheet" : catLower;
+    existingCategories[normCat] = true;
+    existingKeys[normCat + "||" + normalizeBenefitAliasKey_(nameRaw)] = r;
+    if (!descRaw) hasBlankDescriptions = true;
+  }
+
+  const requiredCategories = ["core", "non-benefit", "non-benefit (syariah)", "non-benefit (dplk)", "benefit (dplk)", "biaya (dplk)", "filter channel", "filter underwriting", "company keyword"];
+  let missingCategory = false;
+  for (let c = 0; c < requiredCategories.length; c++) {
+    if (!existingCategories[requiredCategories[c]]) {
+      missingCategory = true;
+      break;
+    }
+  }
+
+  if (!forceSeedAll && !missingCategory && !hasBlankDescriptions) {
+    return configSheet;
+  }
+
+  // Lengkapi kolom D (Keterangan) yang masih kosong pada baris yang sudah ada
+  if (hasBlankDescriptions) {
+    const descColValues = [];
+    for (let r = 1; r < rawValues.length; r++) {
+      const catRaw = String(rawValues[r][0] || "").trim();
+      const nameRaw = String(rawValues[r][1] || "").trim();
+      let descRaw = String(rawValues[r][3] || "").trim();
+      if (!descRaw && catRaw && nameRaw) {
+        descRaw = getDefaultConfigDescription_(catRaw, nameRaw);
+      }
+      descColValues.push([descRaw]);
+    }
+    if (descColValues.length > 0) {
+      configSheet.getRange(2, 4, descColValues.length, 1).setValues(descColValues);
+    }
+  }
+
+  // Tambahkan baris default yang belum ada (tanpa mengubah baris yang sudah ada)
+  const rowsToAppend = [];
+  for (let i = 0; i < DEFAULT_CONFIG_ROWS_.length; i++) {
+    const defRow = DEFAULT_CONFIG_ROWS_[i];
+    const defCatLower = String(defRow[0]).trim().toLowerCase();
+    const defKey = defCatLower + "||" + normalizeBenefitAliasKey_(defRow[1]);
+    if (existingKeys[defKey] === undefined) {
+      if (forceSeedAll || !existingCategories[defCatLower] || defCatLower !== "benefit") {
+        rowsToAppend.push(defRow);
+        existingKeys[defKey] = -1;
+      }
+    }
+  }
+
+  if (rowsToAppend.length > 0) {
+    const startRow = configSheet.getLastRow() + 1;
+    const appendRange = configSheet.getRange(startRow, 1, rowsToAppend.length, 4);
+    appendRange.setNumberFormat("@");
+    appendRange.setValues(rowsToAppend);
+  }
+
+  return configSheet;
+}
+
+// Fungsi yang bisa dijalankan manual dari Editor Google Apps Script kapan saja untuk melengkapi/merapikan Sheet Config
+function setupDefaultConfigSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureDefaultConfigSheet_(ss, true);
+  console.log("Sheet Config berhasil dilengkapi dengan struktur 4 kolom (Kategori | Nama Utama | Nilai / Nama Lain | Keterangan)!");
+}
+
 // Helper Global: Ambil seluruh konfigurasi aman & data produk dari Master Spreadsheet
 // (Memungkinkan Google Spreadsheet dikunci 'Restricted / Private' tanpa perlu dibuka ke publik via /gviz/tq)
-function buildAllProductDataResponse() {
+// Parameter mode: "summary" (ringkas untuk loading awal cepat) atau "full" (default, lengkap).
+function buildAllProductDataResponse(mode) {
+  const isSummary = String(mode || "").trim().toLowerCase() === "summary";
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const DEFAULT_TABS = ["Conventional", "Sharia", "Health & Surgical", "DPLK"];
   const configuredTabs = [];
+  const sheetAliases = [];
+  const coreAliases = [];
   const nonBenefitColumns = [];
+  const syariahNonBenefitColumns = [];
+  const dplkNonBenefitColumns = [];
+  const nonBenefitAliases = [];
   const benefitAliases = [];
+  const dplkBenefits = [];
+  const dplkCharges = [];
+  const channelFilters = [];
+  const underwritingFilters = [];
+  const companyKeywords = [];
   let driveFolderId = "";
 
-  const configSheet = ss.getSheetByName("Config");
+  const configSheet = ensureDefaultConfigSheet_(ss, false);
   if (configSheet && configSheet.getLastRow() > 0 && configSheet.getLastColumn() > 0) {
     const cfgValues = configSheet.getDataRange().getDisplayValues();
     for (let i = 1; i < cfgValues.length; i++) {
@@ -66,8 +541,11 @@ function buildAllProductDataResponse() {
       const type = String(row[0] || "").trim().toLowerCase();
       const val = String(row[1] || "").trim();
       const extra = String(row[2] || "").trim();
+      const desc = String(row[3] || "").trim();
+      if (!type || !val) continue;
+      const aliasesList = splitBenefitAliasList_(extra);
 
-      if ((type === "sheet" || type === "tab" || type === "kategori" || type === "category") && val) {
+      if (type === "sheet" || type === "tab" || type === "kategori" || type === "category") {
         const lowerVal = val.toLowerCase();
         if (
           lowerVal !== "config" &&
@@ -76,16 +554,67 @@ function buildAllProductDataResponse() {
           !configuredTabs.some(function(t) { return t.toLowerCase() === lowerVal; })
         ) {
           configuredTabs.push(val);
+          sheetAliases.push({ canonical: val, aliases: aliasesList, description: desc });
         }
-      } else if (type === "non-benefit" && val) {
+      } else if (type === "core" || type === "identitas") {
+        coreAliases.push({ canonical: val, aliases: aliasesList, description: desc });
+      } else if (type === "non-benefit" || type === "non-benefit (syariah)" || type === "non-benefit (dplk)") {
         if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
           nonBenefitColumns.push(val);
         }
-      } else if (type === "benefit" && val) {
-        // Baris alias manfaat: Benefit | Nama Standar | Alias 1, Alias 2, ...
+        let scope = "general";
+        if (type === "non-benefit (syariah)") {
+          scope = "syariah";
+          if (!syariahNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+            syariahNonBenefitColumns.push(val);
+          }
+        } else if (type === "non-benefit (dplk)") {
+          scope = "dplk";
+          if (!dplkNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+            dplkNonBenefitColumns.push(val);
+          }
+        }
+        nonBenefitAliases.push({
+          canonical: val,
+          aliases: aliasesList,
+          scope: scope,
+          description: desc
+        });
+      } else if (type === "benefit") {
         benefitAliases.push({
           canonical: val,
-          aliases: splitBenefitAliasList_(extra)
+          aliases: aliasesList,
+          description: desc
+        });
+      } else if (type === "benefit (dplk)" || type === "dplk benefit") {
+        dplkBenefits.push({
+          canonical: val,
+          aliases: aliasesList,
+          description: desc
+        });
+      } else if (type === "biaya (dplk)" || type === "dplk charge" || type === "charge (dplk)") {
+        dplkCharges.push({
+          canonical: val,
+          aliases: aliasesList,
+          description: desc
+        });
+      } else if (type === "filter channel" || type === "channel") {
+        channelFilters.push({
+          canonical: val,
+          aliases: aliasesList,
+          description: desc
+        });
+      } else if (type === "filter underwriting" || type === "underwriting") {
+        underwritingFilters.push({
+          canonical: val,
+          aliases: aliasesList,
+          description: desc
+        });
+      } else if (type === "company keyword" || type === "company") {
+        companyKeywords.push({
+          canonical: val,
+          aliases: aliasesList,
+          description: desc
         });
       } else if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
         driveFolderId = extra;
@@ -95,39 +624,64 @@ function buildAllProductDataResponse() {
   }
 
   const tabsToLoad = configuredTabs.length > 0 ? configuredTabs : DEFAULT_TABS;
+  const batchData = readSheetsBatchOrFallback_(ss, tabsToLoad);
   const sheetsData = [];
 
   tabsToLoad.forEach(function(tabName) {
-    const sheet = ss.getSheetByName(tabName);
-    if (!sheet || sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+    const sheetResult = batchData[tabName];
+    const displayVals = (sheetResult && Array.isArray(sheetResult.values)) ? sheetResult.values : [];
+    if (!sheetResult || !sheetResult.exists || displayVals.length === 0) {
       sheetsData.push({
         sheetName: tabName,
-        exists: Boolean(sheet),
+        exists: Boolean(sheetResult && sheetResult.exists),
         headers: [],
         rows: []
       });
       return;
     }
 
-    const displayVals = sheet.getDataRange().getDisplayValues();
     const headers = (displayVals[0] || []).map(function(h) { return String(h || "").trim(); });
-    const rows = displayVals.slice(1);
+    if (headers.length === 0 || headers.every(function(h) { return h === ""; })) {
+      sheetsData.push({
+        sheetName: tabName,
+        exists: true,
+        headers: [],
+        rows: []
+      });
+      return;
+    }
+
+    const fullRows = displayVals.slice(1);
+    const outRows = isSummary
+      ? buildSummaryRowsForSheet_(tabName, headers, fullRows, nonBenefitColumns)
+      : fullRows;
 
     sheetsData.push({
       sheetName: tabName,
       exists: true,
       headers: headers,
-      rows: rows
+      rows: outRows
     });
   });
 
   return {
     status: "success",
     action: "get_all_product_data",
+    mode: isSummary ? "summary" : "full",
     config: {
       tabs: tabsToLoad,
+      sheetAliases: sheetAliases,
+      coreAliases: coreAliases,
       nonBenefitColumns: nonBenefitColumns,
+      syariahNonBenefitColumns: syariahNonBenefitColumns,
+      dplkNonBenefitColumns: dplkNonBenefitColumns,
+      nonBenefitAliases: nonBenefitAliases,
       benefitAliases: benefitAliases,
+      dplkBenefits: dplkBenefits,
+      dplkCharges: dplkCharges,
+      channelFilters: channelFilters,
+      underwritingFilters: underwritingFilters,
+      companyKeywords: companyKeywords,
       driveFolderId: driveFolderId
     },
     sheets: sheetsData
@@ -135,7 +689,7 @@ function buildAllProductDataResponse() {
 }
 
 // ====================================================
-// HELPER: ALIAS NAMA MANFAAT (Config: Benefit | Nama Standar | Alias 1, Alias 2, ...)
+// HELPER: ALIAS NAMA MANFAAT & NON-BENEFIT (Config 4 Kolom: Kategori | Nama Utama | Nilai / Nama Lain | Keterangan)
 // ====================================================
 function splitBenefitAliasList_(raw) {
   return String(raw || "")
@@ -160,26 +714,30 @@ function normalizeBenefitAliasKey_(name) {
     .join(" ");
 }
 
-// Simpan pemetaan alias -> nama standar ke sheet Config.
-// Satu alias hanya boleh menunjuk ke satu nama standar: jika alias sudah terdaftar di nama standar lain, alias dipindahkan.
+// Simpan pemetaan alias -> nama standar ke sheet Config (mendukung tipe "Benefit" dan "Non-Benefit").
+// Satu alias pada tipe yang sama hanya boleh menunjuk ke satu nama standar; baris baru juga dapat didaftarkan tanpa alias.
 function saveBenefitAliases_(ss, mappings) {
-  let configSheet = ss.getSheetByName("Config");
-  if (!configSheet) {
-    configSheet = ss.insertSheet("Config");
-    configSheet.appendRow(["Type", "Value", "Extra"]);
-  }
-
+  const configSheet = ensureDefaultConfigSheet_(ss, false);
   const lastRow = configSheet.getLastRow();
-  const data = lastRow > 0 ? configSheet.getRange(1, 1, lastRow, 3).getValues() : [];
-  const benefitRows = [];
+  const lastCol = Math.max(4, configSheet.getLastColumn());
+  const data = lastRow > 0 ? configSheet.getRange(1, 1, lastRow, lastCol).getValues() : [];
+  const configRowsByType = { "benefit": [], "non-benefit": [] };
+
   for (let i = 1; i < data.length; i++) {
-    const type = String(data[i][0] || "").trim().toLowerCase();
+    const rawType = String(data[i][0] || "").trim();
+    const typeLower = rawType.toLowerCase();
     const canonical = String(data[i][1] || "").trim();
-    if (type === "benefit" && canonical) {
-      benefitRows.push({
+    const desc = String(data[i][3] || "").trim();
+    const isNbType = typeLower === "non-benefit" || typeLower === "non-benefit (syariah)" || typeLower === "non-benefit (dplk)";
+    const isBenType = typeLower === "benefit" || typeLower === "benefit (dplk)";
+    if ((isBenType || isNbType) && canonical) {
+      const groupKey = isNbType ? "non-benefit" : "benefit";
+      configRowsByType[groupKey].push({
         rowNum: i + 1,
+        entryType: rawType || (isNbType ? "Non-Benefit" : "Benefit"),
         canonical: canonical,
         aliases: splitBenefitAliasList_(data[i][2]),
+        description: desc,
         dirty: false
       });
     }
@@ -187,26 +745,42 @@ function saveBenefitAliases_(ss, mappings) {
 
   let added = 0;
   (mappings || []).forEach(function(m) {
-    const canonical = String((m && m.canonical) || "").trim();
-    const alias = String((m && m.alias) || "").trim().replace(/[:：]\s*$/, "").trim();
-    if (!canonical || !alias) return;
+    if (!m) return;
+    const isNonBenefit = String(m.entryType || "").trim().toLowerCase().indexOf("non-benefit") === 0;
+    const typeKey = isNonBenefit ? "non-benefit" : "benefit";
+    const entryTypeLabel = isNonBenefit ? "Non-Benefit" : "Benefit";
+    const typeRows = configRowsByType[typeKey];
+
+    const canonical = String(m.canonical || "").trim();
+    const alias = String(m.alias || "").trim().replace(/[:：]\s*$/, "").trim();
+    if (!canonical) return;
     const canonicalKey = normalizeBenefitAliasKey_(canonical);
-    const aliasKey = normalizeBenefitAliasKey_(alias);
+    const aliasKey = alias ? normalizeBenefitAliasKey_(alias) : "";
+
+    let target = typeRows.find(function(r) { return normalizeBenefitAliasKey_(r.canonical) === canonicalKey; });
+    if (!target) {
+      target = {
+        rowNum: null,
+        entryType: entryTypeLabel,
+        canonical: canonical,
+        aliases: [],
+        description: getDefaultConfigDescription_(entryTypeLabel, canonical),
+        dirty: true
+      };
+      typeRows.push(target);
+      added++;
+    }
+
     if (!aliasKey || aliasKey === canonicalKey) return;
 
-    // Hapus alias yang sama dari nama standar lain agar tidak bentrok
-    benefitRows.forEach(function(r) {
+    // Hapus alias yang sama dari nama standar lain dalam tipe yang sama agar tidak bentrok
+    typeRows.forEach(function(r) {
       if (normalizeBenefitAliasKey_(r.canonical) === canonicalKey) return;
       const before = r.aliases.length;
       r.aliases = r.aliases.filter(function(a) { return normalizeBenefitAliasKey_(a) !== aliasKey; });
       if (r.aliases.length !== before) r.dirty = true;
     });
 
-    let target = benefitRows.find(function(r) { return normalizeBenefitAliasKey_(r.canonical) === canonicalKey; });
-    if (!target) {
-      target = { rowNum: null, canonical: canonical, aliases: [], dirty: true };
-      benefitRows.push(target);
-    }
     if (!target.aliases.some(function(a) { return normalizeBenefitAliasKey_(a) === aliasKey; })) {
       target.aliases.push(alias);
       target.dirty = true;
@@ -214,27 +788,188 @@ function saveBenefitAliases_(ss, mappings) {
     }
   });
 
-  benefitRows.forEach(function(r) {
-    if (!r.dirty) return;
-    const aliasStr = r.aliases.join(", ");
-    let rowNum = r.rowNum;
-    if (!rowNum) {
-      rowNum = configSheet.getLastRow() + 1;
-      configSheet.getRange(rowNum, 1, 1, 2).setValues([["Benefit", r.canonical]]);
-    }
-    const cell = configSheet.getRange(rowNum, 3);
-    cell.setNumberFormat("@");
-    cell.setValue(aliasStr);
+  ["benefit", "non-benefit"].forEach(function(typeKey) {
+    configRowsByType[typeKey].forEach(function(r) {
+      if (!r.dirty) return;
+      const aliasStr = r.aliases.join(", ");
+      let rowNum = r.rowNum;
+      if (!rowNum) {
+        rowNum = configSheet.getLastRow() + 1;
+        const rowRange = configSheet.getRange(rowNum, 1, 1, 4);
+        rowRange.setNumberFormat("@");
+        rowRange.setValues([[r.entryType, r.canonical, aliasStr, r.description || getDefaultConfigDescription_(r.entryType, r.canonical)]]);
+        return;
+      }
+      const cell = configSheet.getRange(rowNum, 3);
+      cell.setNumberFormat("@");
+      cell.setValue(aliasStr);
+      if (!r.description) {
+        configSheet.getRange(rowNum, 4).setValue(getDefaultConfigDescription_(r.entryType, r.canonical));
+      }
+    });
   });
 
   return added;
+}
+
+// Helper: Ambil seluruh daftar dokumen produk dengan Drive Advanced Service (mendukung v2 & v3),
+// atau fallback otomatis ke DriveApp jika Drive API belum diaktifkan.
+function listAllProductDocumentsFast_() {
+  const rootFolder = getOrCreateRootDocFolder();
+  const rootId = rootFolder.getId();
+  const tz = Session.getScriptTimeZone() || "GMT+7";
+
+  if (typeof Drive !== "undefined" && Drive.Files && typeof Drive.Files.list === "function") {
+    try {
+      let detectedVersion = null; // "v3" | "v2"
+      const driveListAll_ = function(q, fieldsV3, fieldsV2) {
+        const collected = [];
+        let pageToken = null;
+        do {
+          let res = null;
+          if (detectedVersion === "v2") {
+            const opts2 = { q: q, maxResults: 1000, fields: fieldsV2 };
+            if (pageToken) opts2.pageToken = pageToken;
+            res = Drive.Files.list(opts2);
+          } else if (detectedVersion === "v3") {
+            const opts3 = { q: q, pageSize: 1000, fields: fieldsV3 };
+            if (pageToken) opts3.pageToken = pageToken;
+            res = Drive.Files.list(opts3);
+          } else {
+            try {
+              const opts3 = { q: q, pageSize: 1000, fields: fieldsV3 };
+              if (pageToken) opts3.pageToken = pageToken;
+              res = Drive.Files.list(opts3);
+              detectedVersion = "v3";
+            } catch (v3Err) {
+              const opts2 = { q: q, maxResults: 1000, fields: fieldsV2 };
+              if (pageToken) opts2.pageToken = pageToken;
+              res = Drive.Files.list(opts2);
+              detectedVersion = "v2";
+            }
+          }
+
+          const batchItems = (res && Array.isArray(res.files)) ? res.files : ((res && Array.isArray(res.items)) ? res.items : []);
+          batchItems.forEach(function(item) { collected.push(item); });
+          pageToken = res ? (res.nextPageToken || null) : null;
+        } while (pageToken);
+
+        return collected;
+      };
+
+      const folderQuery = "'" + rootId + "' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+      const folders = driveListAll_(
+        folderQuery,
+        "nextPageToken, files(id, name)",
+        "nextPageToken, items(id, title)"
+      );
+
+      const folderIdToName = {};
+      const folderIds = [];
+      const folderNames = [];
+      folders.forEach(function(folder) {
+        const fid = folder.id;
+        const fname = String(folder.name || folder.title || "").trim();
+        if (!fid || !fname || fname === "__TABLE_IMAGES__" || fname === "_pdf_preview_cache") return;
+        folderIdToName[fid] = fname;
+        folderIds.push(fid);
+        if (!folderNames.some(function(n) { return n.toLowerCase() === fname.toLowerCase(); })) {
+          folderNames.push(fname);
+        }
+      });
+
+      if (folderIds.length === 0) {
+        return { documents: [], folders: folderNames };
+      }
+
+      const docs = [];
+      const CHUNK_SIZE = 35;
+      for (let i = 0; i < folderIds.length; i += CHUNK_SIZE) {
+        const chunk = folderIds.slice(i, i + CHUNK_SIZE);
+        const parentsExpr = chunk.map(function(fid) { return "'" + fid + "' in parents"; }).join(" or ");
+        const filesQuery = "(" + parentsExpr + ") and mimeType != 'application/vnd.google-apps.folder' and trashed = false";
+        const files = driveListAll_(
+          filesQuery,
+          "nextPageToken, files(id, name, mimeType, description, webViewLink, webContentLink, size, createdTime, parents)",
+          "nextPageToken, items(id, title, mimeType, description, alternateLink, webContentLink, fileSize, createdDate, parents(id))"
+        );
+
+        files.forEach(function(f) {
+          if (!f || !f.id) return;
+          if (String(f.description || "") === "__TABLE_IMAGE__") return;
+
+          let prodName = "";
+          const parentsList = Array.isArray(f.parents) ? f.parents : [];
+          for (let pIdx = 0; pIdx < parentsList.length; pIdx++) {
+            const pEntry = parentsList[pIdx];
+            const pid = (typeof pEntry === "string") ? pEntry : (pEntry && pEntry.id ? pEntry.id : "");
+            if (pid && folderIdToName[pid]) {
+              prodName = folderIdToName[pid];
+              break;
+            }
+          }
+          if (!prodName) return;
+
+          const createdRaw = f.createdTime || f.createdDate || "";
+          const uploadDate = createdRaw
+            ? Utilities.formatDate(new Date(createdRaw), tz, "yyyy-MM-dd HH:mm:ss")
+            : "";
+
+          docs.push({
+            productName: prodName,
+            docType: f.description || "Dokumen",
+            fileName: f.name || f.title || "",
+            fileId: f.id,
+            driveUrl: f.webViewLink || f.alternateLink || ("https://drive.google.com/file/d/" + f.id + "/view"),
+            downloadUrl: "https://drive.google.com/uc?export=download&id=" + f.id,
+            fileSize: Number(f.size != null ? f.size : (f.fileSize || 0)) || 0,
+            uploadDate: uploadDate
+          });
+        });
+      }
+
+      return { documents: docs, folders: folderNames };
+    } catch (driveErr) {
+      console.warn("Drive.Files.list fallback ke DriveApp:", driveErr);
+    }
+  }
+
+  // Fallback standar DriveApp
+  const docs = [];
+  const folderNames = [];
+  const subFolders = rootFolder.getFolders();
+  while (subFolders.hasNext()) {
+    const sub = subFolders.next();
+    const prodName = sub.getName();
+    if (prodName === "__TABLE_IMAGES__" || prodName === "_pdf_preview_cache") continue;
+    if (!folderNames.some(function(n) { return n.toLowerCase() === prodName.toLowerCase(); })) {
+      folderNames.push(prodName);
+    }
+    const files = sub.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      if (f.isTrashed()) continue;
+      if (f.getDescription() === "__TABLE_IMAGE__") continue;
+      docs.push({
+        productName: prodName,
+        docType: f.getDescription() || "Dokumen",
+        fileName: f.getName(),
+        fileId: f.getId(),
+        driveUrl: f.getUrl(),
+        downloadUrl: "https://drive.google.com/uc?export=download&id=" + f.getId(),
+        fileSize: f.getSize(),
+        uploadDate: Utilities.formatDate(f.getDateCreated(), tz, "yyyy-MM-dd HH:mm:ss")
+      });
+    }
+  }
+  return { documents: docs, folders: folderNames };
 }
 
 function doGet(e) {
   // 0. Ambil seluruh data produk & konfigurasi aman langsung via Apps Script (Tanpa perlu /gviz/tq publik)
   if (e && e.parameter && e.parameter.action === "get_all_product_data") {
     try {
-      const result = buildAllProductDataResponse();
+      const result = buildAllProductDataResponse(e.parameter.mode);
       return ContentService.createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
@@ -246,33 +981,11 @@ function doGet(e) {
   // 1. Ambil daftar seluruh dokumen langsung dari folder Google Drive (Tanpa Sheet 'Documents')
   if (e && e.parameter && e.parameter.action === "get_all_documents") {
     try {
-      const rootFolder = getOrCreateRootDocFolder();
-      const docs = [];
-      const subFolders = rootFolder.getFolders();
-      while (subFolders.hasNext()) {
-        const sub = subFolders.next();
-        const prodName = sub.getName();
-        if (prodName === "__TABLE_IMAGES__") continue;
-        const files = sub.getFiles();
-        while (files.hasNext()) {
-          const f = files.next();
-          if (f.isTrashed()) continue;
-          if (f.getDescription() === "__TABLE_IMAGE__") continue;
-          docs.push({
-            productName: prodName,
-            docType: f.getDescription() || "Dokumen",
-            fileName: f.getName(),
-            fileId: f.getId(),
-            driveUrl: f.getUrl(),
-            downloadUrl: "https://drive.google.com/uc?export=download&id=" + f.getId(),
-            fileSize: f.getSize(),
-            uploadDate: Utilities.formatDate(f.getDateCreated(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss")
-          });
-        }
-      }
+      const docResult = listAllProductDocumentsFast_();
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
-        documents: docs
+        documents: docResult.documents,
+        folders: docResult.folders
       })).setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() }))
@@ -333,39 +1046,47 @@ function doPost(e) {
     // Batas karakter per sel Google Sheets
     const MAX_CELL_CHARS = 50000;
 
-    // Helper: Ambil daftar PROTECTED_COLS dari sheet Config secara dinamis
+    // Helper: Ambil daftar PROTECTED_COLS (Seluruh kolom Core & Non-Benefit — baik bawaan maupun yang baru ditambahkan di Config — di-lock / tidak dihapus otomatis; sedangkan Benefit akan dihapus otomatis jika kosong di semua produk)
     function getProtectedCols(sheetName) {
       const isSyariah = /^(sharia|syariah)$/i.test(String(sheetName || "").trim());
-      const defaultCols = [
+      const isDplk = /^dplk$/i.test(String(sheetName || "").trim());
+      const baseProtected = [
         "product name", "company name", "launch date", "tanggal rilis", "par/non par", "product type",
-        "distribution channel", "currency",
-        "death benefit", "accidental death benefit", "terminal illness benefit",
-        "sum assured bonus", "cash payout bonus", "maturity benefit",
+        "distribution channel", "currency", "remarks",
         "additional benefit",
         "entry age", "coverage period", "premium payment period (ppp)",
         "min premium", "min sum assured", "underwriting method", "available riders"
-      ].concat(isSyariah ? ["aqd", "akad", "alokasi kontribusi", "surplus underwriting"] : []);
+      ].concat(isSyariah ? ["aqd", "akad", "aqd / akad", "alokasi kontribusi", "surplus underwriting"] : [])
+       .concat(isDplk ? ["sales tools", "after sales tools"] : []);
 
       try {
         const configSheet = ss.getSheetByName("Config");
-        if (!configSheet) return defaultCols;
-
-        const data = configSheet.getDataRange().getValues();
-        const customCols = [];
-        for (let i = 1; i < data.length; i++) {
-          const type = String(data[i][0] || "").trim().toLowerCase();
-          const val = String(data[i][1] || "").trim().toLowerCase();
-          if (type === "non-benefit" && val) {
-            if (!isSyariah && ["aqd", "akad", "alokasi kontribusi", "surplus underwriting"].includes(val)) {
-              continue;
+        if (configSheet && configSheet.getLastRow() > 1) {
+          const cfgVals = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+          for (let i = 0; i < cfgVals.length; i++) {
+            const cat = String(cfgVals[i][0] || "").trim().toLowerCase();
+            const name = String(cfgVals[i][1] || "").trim().toLowerCase();
+            if (!name) continue;
+            if (
+              cat === "core" ||
+              cat === "identitas" ||
+              cat === "non-benefit" ||
+              cat === "non-benefit (syariah)" ||
+              cat === "non-benefit (dplk)" ||
+              cat === "biaya (dplk)" ||
+              cat === "dplk charge"
+            ) {
+              if (baseProtected.indexOf(name) === -1) {
+                baseProtected.push(name);
+              }
             }
-            customCols.push(val);
           }
         }
-        return customCols.length > 0 ? Array.from(new Set(defaultCols.concat(customCols))) : defaultCols;
-      } catch (err) {
-        return defaultCols;
+      } catch (cfgErr) {
+        console.warn("Gagal membaca Config pada getProtectedCols:", cfgErr);
       }
+
+      return baseProtected;
     }
 
     // Helper: Sinkronisasi Header Kolom Sheet dengan Header Baru dari Web / Excel
@@ -438,7 +1159,8 @@ function doPost(e) {
       range.setValues([strRowData]);
     }
 
-    // Helper: Pembersihan Kolom Manfaat Kosong
+    // Helper: Pembersihan Kolom Manfaat (Benefit) Kosong dari Sheet Produk & Config
+    // Catatan: Kolom Non-Benefit (baik existing maupun baru) sudah masuk getProtectedCols sehingga TIDAK dihapus.
     function cleanupEmptyBenefitColumns(targetSheet) {
       try {
         const sNameLower = String(targetSheet.getName() || "").trim().toLowerCase();
@@ -450,9 +1172,12 @@ function doPost(e) {
         const protectedCols = getProtectedCols(targetSheet.getName());
         const headers = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0];
         const data = targetSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+        const deletedBenefitKeys = {};
+        let hasDeletedAny = false;
 
         for (let c = lastCol - 1; c >= 0; c--) {
-          const hName = String(headers[c] || "").trim().toLowerCase();
+          const rawHeader = String(headers[c] || "").trim();
+          const hName = rawHeader.toLowerCase();
           if (!hName || protectedCols.includes(hName)) {
             continue;
           }
@@ -468,6 +1193,51 @@ function doPost(e) {
 
           if (!hasValue) {
             targetSheet.deleteColumn(c + 1);
+            const normKey = normalizeBenefitAliasKey_(rawHeader);
+            if (normKey) {
+              deletedBenefitKeys[normKey] = true;
+              hasDeletedAny = true;
+            }
+          }
+        }
+
+        // Jika ada kolom Benefit yang dihapus, cek apakah Benefit tersebut masih dipakai di sheet produk lain.
+        // Apabila sudah tidak dipakai di produk mana pun, hapus juga dari sheet Config.
+        if (hasDeletedAny) {
+          const stillUsedBenefitKeys = {};
+          const allSheets = ss.getSheets();
+          for (let s = 0; s < allSheets.length; s++) {
+            const sh = allSheets[s];
+            const shNameL = String(sh.getName() || "").trim().toLowerCase();
+            if (shNameL === "config" || shNameL === "users" || shNameL === "documents") continue;
+            const shLastCol = sh.getLastColumn();
+            const shLastRow = sh.getLastRow();
+            if (shLastCol <= 1 || shLastRow <= 1) continue;
+            const shHeaders = sh.getRange(1, 1, 1, shLastCol).getValues()[0];
+            const shData = sh.getRange(2, 1, shLastRow - 1, shLastCol).getValues();
+            for (let colIdx = 0; colIdx < shHeaders.length; colIdx++) {
+              const k = normalizeBenefitAliasKey_(shHeaders[colIdx]);
+              if (!k || !deletedBenefitKeys[k]) continue;
+              for (let rIdx = 0; rIdx < shData.length; rIdx++) {
+                const v = String(shData[rIdx][colIdx] || "").trim();
+                if (v !== "" && v !== "-") {
+                  stillUsedBenefitKeys[k] = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          const configSheet = ss.getSheetByName("Config");
+          if (configSheet && configSheet.getLastRow() > 1) {
+            const cfgVals = configSheet.getRange(1, 1, configSheet.getLastRow(), 2).getDisplayValues();
+            for (let r = cfgVals.length - 1; r >= 1; r--) {
+              const catL = String(cfgVals[r][0] || "").trim().toLowerCase();
+              const canonicalKey = normalizeBenefitAliasKey_(cfgVals[r][1]);
+              if (catL === "benefit" && canonicalKey && deletedBenefitKeys[canonicalKey] && !stillUsedBenefitKeys[canonicalKey]) {
+                configSheet.deleteRow(r + 1);
+              }
+            }
           }
         }
       } catch (err) {
@@ -482,7 +1252,7 @@ function doPost(e) {
 
     // 00. ACTION: GET_ALL_PRODUCT_DATA (Via POST)
     if (payload.action === "get_all_product_data") {
-      return jsonResponse(buildAllProductDataResponse());
+      return jsonResponse(buildAllProductDataResponse(payload.mode));
     }
 
     // ====================================================
@@ -525,7 +1295,7 @@ function doPost(e) {
           }
         }
         // Jika belum ada baris Invite Code di Sheet Config, tambahkan otomatis agar mudah diubah admin
-        configSheet.appendRow(["Setting", "Invite Code", DEFAULT_INVITE_CODE]);
+        configSheet.appendRow(["Setting", "Invite Code", DEFAULT_INVITE_CODE, "Kode akses rahasia untuk pendaftaran akun baru (Sign Up)"]);
       } catch (e) {
         console.warn("Gagal membaca Invite Code dari Config:", e);
       }
