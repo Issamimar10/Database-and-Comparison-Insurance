@@ -508,14 +508,147 @@ function ensureDefaultConfigSheet_(ss, forceSeedAll) {
 function setupDefaultConfigSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureDefaultConfigSheet_(ss, true);
+  invalidateSummaryCache_();
   console.log("Sheet Config berhasil dilengkapi dengan struktur 4 kolom (Kategori | Nama Utama | Nilai / Nama Lain | Keterangan)!");
+}
+
+// ====================================================
+// CACHE RINGKAS STARTUP (CacheService) AGAR LOADING AWAL JAUH LEBIH CEPAT
+// ====================================================
+const SUMMARY_CACHE_PREFIX_ = "IDCM_SUMMARY_V2_";
+const SUMMARY_CACHE_TTL_SEC_ = 21600; // 6 jam (otomatis di-invalidate setiap ada perubahan data/config)
+
+function getCachedSummaryResponseText_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const metaRaw = cache.get(SUMMARY_CACHE_PREFIX_ + "META");
+    if (!metaRaw) return null;
+    const meta = JSON.parse(metaRaw);
+    const chunks = Number(meta && meta.chunks) || 0;
+    if (chunks <= 0) return null;
+    const keys = [];
+    for (let i = 0; i < chunks; i++) keys.push(SUMMARY_CACHE_PREFIX_ + "CHUNK_" + i);
+    const vals = cache.getAll(keys);
+    let joined = "";
+    for (let i = 0; i < chunks; i++) {
+      const part = vals[SUMMARY_CACHE_PREFIX_ + "CHUNK_" + i];
+      if (!part) return null;
+      joined += part;
+    }
+    return joined;
+  } catch (e) {
+    return null;
+  }
+}
+
+function setCachedSummaryResponseText_(jsonText) {
+  try {
+    const text = String(jsonText || "");
+    if (!text) return;
+    const cache = CacheService.getScriptCache();
+    const CHUNK_SIZE = 90000; // di bawah batas 100KB per entri CacheService
+    const chunks = Math.ceil(text.length / CHUNK_SIZE);
+    if (chunks > 10) return; // terlalu besar untuk CacheService (>900KB)
+    const entries = {};
+    for (let i = 0; i < chunks; i++) {
+      entries[SUMMARY_CACHE_PREFIX_ + "CHUNK_" + i] = text.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    }
+    entries[SUMMARY_CACHE_PREFIX_ + "META"] = JSON.stringify({ chunks: chunks, updatedAt: Date.now() });
+    cache.putAll(entries, SUMMARY_CACHE_TTL_SEC_);
+  } catch (e) {
+    console.warn("Gagal menyimpan summary cache:", e);
+  }
+}
+
+function invalidateSummaryCache_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const keys = [SUMMARY_CACHE_PREFIX_ + "META"];
+    for (let i = 0; i < 10; i++) keys.push(SUMMARY_CACHE_PREFIX_ + "CHUNK_" + i);
+    cache.removeAll(keys);
+  } catch (e) {}
+}
+
+// Helper: Baca cepat sheet Config tanpa memicu write ke spreadsheet kecuali benar-benar belum lengkap
+function getFastConfigDisplayValues_(ss) {
+  let cfgValues = null;
+  if (typeof Sheets !== "undefined" && Sheets.Spreadsheets && Sheets.Spreadsheets.Values && typeof Sheets.Spreadsheets.Values.get === "function") {
+    try {
+      const res = Sheets.Spreadsheets.Values.get(ss.getId(), "'Config'!A1:D1000", { valueRenderOption: "FORMATTED_VALUE" });
+      if (res && Array.isArray(res.values) && res.values.length > 0) {
+        cfgValues = res.values.map(function(r) {
+          return [
+            r[0] !== undefined ? String(r[0]) : "",
+            r[1] !== undefined ? String(r[1]) : "",
+            r[2] !== undefined ? String(r[2]) : "",
+            r[3] !== undefined ? String(r[3]) : ""
+          ];
+        });
+      }
+    } catch (e) {}
+  }
+
+  let needsSetup = !cfgValues || cfgValues.length === 0;
+  if (!needsSetup) {
+    const h = cfgValues[0];
+    const has4ColHeader = String(h[0] || "").trim() === CONFIG_HEADERS_4COL_[0] &&
+      String(h[1] || "").trim() === CONFIG_HEADERS_4COL_[1] &&
+      String(h[2] || "").trim() === CONFIG_HEADERS_4COL_[2] &&
+      String(h[3] || "").trim() === CONFIG_HEADERS_4COL_[3];
+    if (!has4ColHeader) {
+      needsSetup = true;
+    } else {
+      let hasCore = false;
+      let hasCompanyKw = false;
+      for (let i = 1; i < cfgValues.length; i++) {
+        const t = String(cfgValues[i][0] || "").trim().toLowerCase();
+        if (t === "core" || t === "identitas") hasCore = true;
+        if (t === "company keyword" || t === "company") hasCompanyKw = true;
+        if (hasCore && hasCompanyKw) break;
+      }
+      if (!hasCore || !hasCompanyKw) needsSetup = true;
+    }
+  }
+
+  if (needsSetup) {
+    const configSheet = ensureDefaultConfigSheet_(ss, false);
+    if (configSheet && configSheet.getLastRow() > 0 && configSheet.getLastColumn() > 0) {
+      cfgValues = configSheet.getDataRange().getDisplayValues();
+    }
+  }
+  return cfgValues || [];
+}
+
+function parseProductSectionExtra_(rawExtra) {
+  const txt = String(rawExtra || "").trim();
+  if (!txt) return { mode: "standard", items: [] };
+  const pipeIdx = txt.indexOf("|");
+  let modePart = txt;
+  let itemsPart = "";
+  if (pipeIdx !== -1) {
+    modePart = txt.substring(0, pipeIdx).trim();
+    itemsPart = txt.substring(pipeIdx + 1).trim();
+  }
+  const modeMatch = modePart.match(/mode\s*=\s*(checklist|standard)/i);
+  const mode = modeMatch ? modeMatch[1].toLowerCase() : (/checklist/i.test(modePart) ? "checklist" : "standard");
+  const items = itemsPart
+    ? splitBenefitAliasList_(itemsPart)
+    : (!modeMatch && txt.indexOf("=") === -1 ? splitBenefitAliasList_(txt) : []);
+  return { mode: mode, items: items };
 }
 
 // Helper Global: Ambil seluruh konfigurasi aman & data produk dari Master Spreadsheet
 // (Memungkinkan Google Spreadsheet dikunci 'Restricted / Private' tanpa perlu dibuka ke publik via /gviz/tq)
 // Parameter mode: "summary" (ringkas untuk loading awal cepat) atau "full" (default, lengkap).
-function buildAllProductDataResponse(mode) {
+function buildAllProductDataResponse(mode, bypassCache) {
   const isSummary = String(mode || "").trim().toLowerCase() === "summary";
+  if (isSummary && !bypassCache) {
+    const cachedText = getCachedSummaryResponseText_();
+    if (cachedText) {
+      return { __rawCachedJsonText: cachedText };
+    }
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const DEFAULT_TABS = ["Conventional", "Sharia", "Health & Surgical", "DPLK"];
   const configuredTabs = [];
@@ -531,96 +664,148 @@ function buildAllProductDataResponse(mode) {
   const channelFilters = [];
   const underwritingFilters = [];
   const companyKeywords = [];
+  const categoryConfigs = {};
+  const ensureCatCfg = function(catName) {
+    const key = String(catName || "").trim();
+    if (!key) return null;
+    if (!categoryConfigs[key]) {
+      categoryConfigs[key] = {
+        generalProvisions: null,
+        specialProvisions: [],
+        productSections: []
+      };
+    }
+    return categoryConfigs[key];
+  };
   let driveFolderId = "";
 
-  const configSheet = ensureDefaultConfigSheet_(ss, false);
-  if (configSheet && configSheet.getLastRow() > 0 && configSheet.getLastColumn() > 0) {
-    const cfgValues = configSheet.getDataRange().getDisplayValues();
-    for (let i = 1; i < cfgValues.length; i++) {
-      const row = cfgValues[i];
-      const type = String(row[0] || "").trim().toLowerCase();
-      const val = String(row[1] || "").trim();
-      const extra = String(row[2] || "").trim();
-      const desc = String(row[3] || "").trim();
-      if (!type || !val) continue;
-      const aliasesList = splitBenefitAliasList_(extra);
+  const cfgValues = getFastConfigDisplayValues_(ss);
+  for (let i = 1; i < cfgValues.length; i++) {
+    const row = cfgValues[i];
+    const type = String(row[0] || "").trim().toLowerCase();
+    const val = String(row[1] || "").trim();
+    const extra = String(row[2] || "").trim();
+    const desc = String(row[3] || "").trim();
+    if (!type || !val) continue;
+    const aliasesList = splitBenefitAliasList_(extra);
 
-      if (type === "sheet" || type === "tab" || type === "kategori" || type === "category") {
-        const lowerVal = val.toLowerCase();
-        if (
-          lowerVal !== "config" &&
-          lowerVal !== "documents" &&
-          lowerVal !== "users" &&
-          !configuredTabs.some(function(t) { return t.toLowerCase() === lowerVal; })
-        ) {
-          configuredTabs.push(val);
-          sheetAliases.push({ canonical: val, aliases: aliasesList, description: desc });
-        }
-      } else if (type === "core" || type === "identitas") {
-        coreAliases.push({ canonical: val, aliases: aliasesList, description: desc });
-      } else if (type === "non-benefit" || type === "non-benefit (syariah)" || type === "non-benefit (dplk)") {
-        if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
-          nonBenefitColumns.push(val);
-        }
-        let scope = "general";
-        if (type === "non-benefit (syariah)") {
-          scope = "syariah";
-          if (!syariahNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
-            syariahNonBenefitColumns.push(val);
-          }
-        } else if (type === "non-benefit (dplk)") {
-          scope = "dplk";
-          if (!dplkNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
-            dplkNonBenefitColumns.push(val);
-          }
-        }
-        nonBenefitAliases.push({
-          canonical: val,
-          aliases: aliasesList,
-          scope: scope,
-          description: desc
-        });
-      } else if (type === "benefit") {
-        benefitAliases.push({
-          canonical: val,
-          aliases: aliasesList,
-          description: desc
-        });
-      } else if (type === "benefit (dplk)" || type === "dplk benefit") {
-        dplkBenefits.push({
-          canonical: val,
-          aliases: aliasesList,
-          description: desc
-        });
-      } else if (type === "biaya (dplk)" || type === "dplk charge" || type === "charge (dplk)") {
-        dplkCharges.push({
-          canonical: val,
-          aliases: aliasesList,
-          description: desc
-        });
-      } else if (type === "filter channel" || type === "channel") {
-        channelFilters.push({
-          canonical: val,
-          aliases: aliasesList,
-          description: desc
-        });
-      } else if (type === "filter underwriting" || type === "underwriting") {
-        underwritingFilters.push({
-          canonical: val,
-          aliases: aliasesList,
-          description: desc
-        });
-      } else if (type === "company keyword" || type === "company") {
-        companyKeywords.push({
-          canonical: val,
-          aliases: aliasesList,
-          description: desc
-        });
-      } else if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
-        driveFolderId = extra;
+    if (type === "sheet" || type === "tab" || type === "kategori" || type === "category") {
+      const lowerVal = val.toLowerCase();
+      if (
+        lowerVal !== "config" &&
+        lowerVal !== "documents" &&
+        lowerVal !== "users" &&
+        !configuredTabs.some(function(t) { return t.toLowerCase() === lowerVal; })
+      ) {
+        configuredTabs.push(val);
+        sheetAliases.push({ canonical: val, aliases: aliasesList, description: desc });
       }
-      // Catatan Keamanan: Baris 'Invite Code' TIDAK dimasukkan ke response agar tetap rahasia di server
+    } else if (type === "core" || type === "identitas") {
+      coreAliases.push({ canonical: val, aliases: aliasesList, description: desc });
+    } else if (type === "category provision" || type === "category provisions") {
+      const catEntry = ensureCatCfg(val);
+      if (catEntry) {
+        catEntry.generalProvisions = aliasesList;
+      }
+    } else if (type.indexOf("special provision") === 0) {
+      const spMatch = type.match(/^special\s+provisions?\s*\((.+)\)$/i);
+      const targetCatName = spMatch ? spMatch[1].trim() : "";
+      if (targetCatName) {
+        const matchedCat = configuredTabs.find(function(t) { return t.toLowerCase() === targetCatName.toLowerCase(); }) || targetCatName;
+        const catEntry = ensureCatCfg(matchedCat);
+        const allowImg = /\[image\]/i.test(desc);
+        const cleanDesc = desc.replace(/\[image\]/gi, "").trim();
+        if (catEntry) {
+          catEntry.specialProvisions.push({
+            name: val,
+            aliases: aliasesList,
+            allowImage: allowImg,
+            description: cleanDesc
+          });
+        }
+      }
+      if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+        nonBenefitColumns.push(val);
+      }
+      nonBenefitAliases.push({ canonical: val, aliases: aliasesList, scope: "special", description: desc });
+    } else if (type.indexOf("product section") === 0) {
+      const secMatch = type.match(/^product\s+sections?\s*\((.+)\)$/i);
+      const targetCatName = secMatch ? secMatch[1].trim() : "";
+      if (targetCatName) {
+        const matchedCat = configuredTabs.find(function(t) { return t.toLowerCase() === targetCatName.toLowerCase(); }) || targetCatName;
+        const catEntry = ensureCatCfg(matchedCat);
+        const parsedSec = parseProductSectionExtra_(extra);
+        if (catEntry) {
+          catEntry.productSections.push({
+            title: val,
+            mode: parsedSec.mode,
+            items: parsedSec.items,
+            description: desc
+          });
+        }
+      }
+    } else if (type === "non-benefit" || type === "non-benefit (syariah)" || type === "non-benefit (dplk)") {
+      if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+        nonBenefitColumns.push(val);
+      }
+      let scope = "general";
+      if (type === "non-benefit (syariah)") {
+        scope = "syariah";
+        if (!syariahNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+          syariahNonBenefitColumns.push(val);
+        }
+      } else if (type === "non-benefit (dplk)") {
+        scope = "dplk";
+        if (!dplkNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+          dplkNonBenefitColumns.push(val);
+        }
+      }
+      nonBenefitAliases.push({
+        canonical: val,
+        aliases: aliasesList,
+        scope: scope,
+        description: desc
+      });
+    } else if (type === "benefit") {
+      benefitAliases.push({
+        canonical: val,
+        aliases: aliasesList,
+        description: desc
+      });
+    } else if (type === "benefit (dplk)" || type === "dplk benefit") {
+      dplkBenefits.push({
+        canonical: val,
+        aliases: aliasesList,
+        description: desc
+      });
+    } else if (type === "biaya (dplk)" || type === "dplk charge" || type === "charge (dplk)") {
+      dplkCharges.push({
+        canonical: val,
+        aliases: aliasesList,
+        description: desc
+      });
+    } else if (type === "filter channel" || type === "channel") {
+      channelFilters.push({
+        canonical: val,
+        aliases: aliasesList,
+        description: desc
+      });
+    } else if (type === "filter underwriting" || type === "underwriting") {
+      underwritingFilters.push({
+        canonical: val,
+        aliases: aliasesList,
+        description: desc
+      });
+    } else if (type === "company keyword" || type === "company") {
+      companyKeywords.push({
+        canonical: val,
+        aliases: aliasesList,
+        description: desc
+      });
+    } else if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
+      driveFolderId = extra;
     }
+    // Catatan Keamanan: Baris 'Invite Code' TIDAK dimasukkan ke response agar tetap rahasia di server
   }
 
   const tabsToLoad = configuredTabs.length > 0 ? configuredTabs : DEFAULT_TABS;
@@ -664,7 +849,7 @@ function buildAllProductDataResponse(mode) {
     });
   });
 
-  return {
+  const resultObj = {
     status: "success",
     action: "get_all_product_data",
     mode: isSummary ? "summary" : "full",
@@ -682,10 +867,200 @@ function buildAllProductDataResponse(mode) {
       channelFilters: channelFilters,
       underwritingFilters: underwritingFilters,
       companyKeywords: companyKeywords,
+      categoryConfigs: categoryConfigs,
       driveFolderId: driveFolderId
     },
     sheets: sheetsData
   };
+
+  if (isSummary) {
+    setCachedSummaryResponseText_(JSON.stringify(resultObj));
+  }
+
+  return resultObj;
+}
+
+// Simpan konfigurasi Sheet / Kategori beserta Provision, Special Provision, & Product Sections ke Master Spreadsheet & Config
+function saveSheetCategoryConfig_(ss, payload) {
+  const sheetName = String(payload.sheetName || "").trim();
+  if (!sheetName) {
+    throw new Error("Nama sheet / kategori tidak boleh kosong.");
+  }
+  const lowerSheetName = sheetName.toLowerCase();
+  if (lowerSheetName === "config" || lowerSheetName === "users" || lowerSheetName === "documents") {
+    throw new Error("Nama sheet tidak diizinkan (reserved system sheet): " + sheetName);
+  }
+
+  const aliases = Array.isArray(payload.aliases) ? payload.aliases.map(function(s) { return String(s || "").trim(); }).filter(Boolean) : [];
+  const generalProvisions = Array.isArray(payload.generalProvisions) ? payload.generalProvisions.map(function(s) { return String(s || "").trim(); }).filter(Boolean) : [];
+  const specialProvisions = Array.isArray(payload.specialProvisions)
+    ? payload.specialProvisions
+        .map(function(sp) {
+          return {
+            name: String((sp && sp.name) || "").trim(),
+            aliases: Array.isArray(sp && sp.aliases) ? sp.aliases.map(function(a) { return String(a || "").trim(); }).filter(Boolean) : [],
+            allowImage: Boolean(sp && sp.allowImage),
+            description: String((sp && sp.description) || "").trim()
+          };
+        })
+        .filter(function(sp) { return sp.name !== ""; })
+    : [];
+  const productSections = Array.isArray(payload.productSections)
+    ? payload.productSections
+        .map(function(sec) {
+          const title = String((sec && sec.title) || "").trim();
+          const mode = String((sec && sec.mode) || "standard").trim().toLowerCase() === "checklist" ? "checklist" : "standard";
+          const items = Array.isArray(sec && sec.items) ? sec.items.map(function(x) { return String(x || "").trim(); }).filter(Boolean) : [];
+          return { title: title, mode: mode, items: items };
+        })
+        .filter(function(sec) { return sec.title !== ""; })
+    : [];
+
+  // 1. Pastikan tab sheet produk tersedia dan memiliki header kolom yang diperlukan (tanpa menghapus data existing)
+  let targetSheet = ss.getSheetByName(sheetName);
+  if (!targetSheet) {
+    const existingByLower = ss.getSheets().find(function(s) { return String(s.getName() || "").trim().toLowerCase() === lowerSheetName; });
+    targetSheet = existingByLower || ss.insertSheet(sheetName);
+  }
+
+  const requiredHeaders = [
+    "Product Name", "Company Name", "Par/Non Par", "Product Type",
+    "Distribution Channel", "Currency", "Launch Date"
+  ];
+  generalProvisions.forEach(function(gp) {
+    if (!requiredHeaders.some(function(h) { return h.toLowerCase() === gp.toLowerCase(); })) {
+      requiredHeaders.push(gp);
+    }
+  });
+  specialProvisions.forEach(function(sp) {
+    if (!requiredHeaders.some(function(h) { return h.toLowerCase() === sp.name.toLowerCase(); })) {
+      requiredHeaders.push(sp.name);
+    }
+  });
+  if (!requiredHeaders.some(function(h) { return h.toLowerCase() === "additional benefit"; })) {
+    requiredHeaders.push("Additional Benefit");
+  }
+
+  const lastCol = targetSheet.getLastColumn();
+  if (lastCol === 0 || targetSheet.getLastRow() === 0) {
+    targetSheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    targetSheet.getRange(1, 1, 1, requiredHeaders.length).setFontWeight("bold");
+  } else {
+    const existingHeaders = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) { return String(h || "").trim(); });
+    const existingLower = existingHeaders.map(function(h) { return h.toLowerCase(); });
+    const colsToAdd = [];
+    requiredHeaders.forEach(function(h) {
+      if (existingLower.indexOf(h.toLowerCase()) === -1) {
+        colsToAdd.push(h);
+        existingLower.push(h.toLowerCase());
+      }
+    });
+    if (colsToAdd.length > 0) {
+      const startCol = existingHeaders.length + 1;
+      targetSheet.getRange(1, startCol, 1, colsToAdd.length).setValues([colsToAdd]);
+      targetSheet.getRange(1, startCol, 1, colsToAdd.length).setFontWeight("bold");
+    }
+  }
+
+  // 2. Perbarui sheet Config (4 Kolom) secara rapi tanpa menghilangkan baris pengaturan lain
+  const configSheet = ensureDefaultConfigSheet_(ss, false);
+  const cfgLastRow = configSheet.getLastRow();
+  const cfgCols = Math.max(4, configSheet.getLastColumn());
+  const cfgData = cfgLastRow > 0 ? configSheet.getRange(1, 1, cfgLastRow, cfgCols).getDisplayValues() : [CONFIG_HEADERS_4COL_];
+
+  const spCatLabel = "Special Provision (" + sheetName + ")";
+  const spCatLower = spCatLabel.toLowerCase();
+  const secCatLabel = "Product Section (" + sheetName + ")";
+  const secCatLower = secCatLabel.toLowerCase();
+  const isShariaAlias = /^(sharia|syariah)$/i.test(sheetName);
+  const isDplkSheet = /^dplk$/i.test(sheetName);
+
+  const nonBenExistingKeys = {};
+  const retainedRows = [CONFIG_HEADERS_4COL_];
+  let sheetRowUpdated = false;
+  let catProvRowUpdated = false;
+
+  for (let r = 1; r < cfgData.length; r++) {
+    const row = cfgData[r];
+    const c0 = String(row[0] || "").trim();
+    const c0L = c0.toLowerCase();
+    const c1 = String(row[1] || "").trim();
+    const c1L = c1.toLowerCase();
+    const c2 = String(row[2] || "").trim();
+    const c3 = String(row[3] || "").trim();
+
+    if (!c0 && !c1 && !c2 && !c3) continue;
+
+    // Hapus baris Special Provision / Product Section lama milik kategori ini (akan digantikan yang terbaru)
+    if (c0L === spCatLower || c0L === secCatLower) {
+      continue;
+    }
+    if (isShariaAlias && c0L === "non-benefit (syariah)") continue;
+    if (isDplkSheet && c0L === "non-benefit (dplk)") continue;
+
+    if ((c0L === "sheet" || c0L === "tab" || c0L === "kategori" || c0L === "category") && c1L === lowerSheetName) {
+      retainedRows.push(["Sheet", sheetName, aliases.join(", "), c3 || ("Nama tab sheet produk " + sheetName + " di Master Spreadsheet")]);
+      sheetRowUpdated = true;
+      continue;
+    }
+
+    if ((c0L === "category provision" || c0L === "category provisions") && c1L === lowerSheetName) {
+      retainedRows.push(["Category Provision", sheetName, generalProvisions.join(", "), "Daftar General Provision aktif untuk kategori " + sheetName]);
+      catProvRowUpdated = true;
+      continue;
+    }
+
+    if (c0L === "non-benefit" && c1) {
+      nonBenExistingKeys[normalizeBenefitAliasKey_(c1)] = true;
+    }
+
+    retainedRows.push([c0, c1, c2, c3]);
+  }
+
+  if (!sheetRowUpdated) {
+    retainedRows.push(["Sheet", sheetName, aliases.join(", "), "Nama tab sheet produk " + sheetName + " di Master Spreadsheet"]);
+  }
+  if (!catProvRowUpdated) {
+    retainedRows.push(["Category Provision", sheetName, generalProvisions.join(", "), "Daftar General Provision aktif untuk kategori " + sheetName]);
+  }
+
+  specialProvisions.forEach(function(sp) {
+    const descBase = sp.description || ("Special Provision khusus kategori " + sheetName + " (di-lock / tidak dihapus otomatis)");
+    const finalDesc = sp.allowImage ? (descBase + " [Image]") : descBase;
+    retainedRows.push([spCatLabel, sp.name, sp.aliases.join(", "), finalDesc]);
+  });
+
+  productSections.forEach(function(sec) {
+    const itemsStr = sec.items.join(", ");
+    const valCol = itemsStr ? ("mode=" + sec.mode + " | " + itemsStr) : ("mode=" + sec.mode);
+    const modeLabel = sec.mode === "checklist" ? "Checklist + Catatan" : "Teks & Gambar";
+    retainedRows.push([secCatLabel, sec.title, valCol, "Section " + sec.title + " pada " + sheetName + " (" + modeLabel + ")"]);
+  });
+
+  // Daftarkan General Provision kustom baru ke kategori "Non-Benefit" agar tetap diproteksi
+  const builtInCoreOrGen = {
+    "product name": true, "company name": true, "par/non par": true, "product type": true,
+    "distribution channel": true, "currency": true, "launch date": true, "tanggal rilis": true,
+    "entry age": true, "coverage period": true, "premium payment period (ppp)": true,
+    "min premium": true, "min sum assured": true, "underwriting method": true,
+    "available riders": true, "additional benefit": true, "remarks": true
+  };
+  generalProvisions.forEach(function(gp) {
+    const gpKey = normalizeBenefitAliasKey_(gp);
+    if (!builtInCoreOrGen[gp.toLowerCase()] && !nonBenExistingKeys[gpKey]) {
+      retainedRows.push(["Non-Benefit", gp, "", getDefaultConfigDescription_("Non-Benefit", gp)]);
+      nonBenExistingKeys[gpKey] = true;
+    }
+  });
+
+  configSheet.clearContents();
+  const writeRange = configSheet.getRange(1, 1, retainedRows.length, 4);
+  writeRange.setNumberFormat("@");
+  writeRange.setValues(retainedRows);
+  configSheet.getRange(1, 1, 1, 4).setFontWeight("bold");
+
+  invalidateSummaryCache_();
+  return buildAllProductDataResponse("summary", true).config;
 }
 
 // ====================================================
@@ -969,7 +1344,12 @@ function doGet(e) {
   // 0. Ambil seluruh data produk & konfigurasi aman langsung via Apps Script (Tanpa perlu /gviz/tq publik)
   if (e && e.parameter && e.parameter.action === "get_all_product_data") {
     try {
-      const result = buildAllProductDataResponse(e.parameter.mode);
+      const bypassCache = e.parameter.nocache === "1" || e.parameter.nocache === "true";
+      const result = buildAllProductDataResponse(e.parameter.mode, bypassCache);
+      if (result && result.__rawCachedJsonText) {
+        return ContentService.createTextOutput(result.__rawCachedJsonText)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
       return ContentService.createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
@@ -1073,12 +1453,15 @@ function doPost(e) {
               cat === "non-benefit" ||
               cat === "non-benefit (syariah)" ||
               cat === "non-benefit (dplk)" ||
+              cat.indexOf("special provision") === 0 ||
               cat === "biaya (dplk)" ||
               cat === "dplk charge"
             ) {
               if (baseProtected.indexOf(name) === -1) {
                 baseProtected.push(name);
               }
+            } else if ((cat === "category provision" || cat === "category provisions") && name === String(sheetName || "").trim().toLowerCase()) {
+              // Pastikan juga seluruh general provisions kategori ini diproteksi
             }
           }
         }
@@ -1773,6 +2156,7 @@ function doPost(e) {
         cleanupEmptyBenefitColumns(affectedSheets[sName]);
       });
 
+      invalidateSummaryCache_();
       return jsonResponse({ status: "success", action: "delete" });
     }
 
@@ -1781,7 +2165,21 @@ function doPost(e) {
     // ====================================================
     if (payload.action === "save_benefit_aliases" && Array.isArray(payload.mappings)) {
       const addedCount = saveBenefitAliases_(ss, payload.mappings);
+      invalidateSummaryCache_();
       return jsonResponse({ status: "success", action: "save_benefit_aliases", added: addedCount });
+    }
+
+    // ====================================================
+    // 4c. ACTION: SIMPAN PENGATURAN SHEET / KATEGORI (General Provisions, Special Provisions, Product Sections)
+    // ====================================================
+    if (payload.action === "save_sheet_category_config") {
+      const updatedConfig = saveSheetCategoryConfig_(ss, payload);
+      return jsonResponse({
+        status: "success",
+        action: "save_sheet_category_config",
+        sheetName: payload.sheetName,
+        config: updatedConfig
+      });
     }
 
     let sheet = ss.getSheetByName(payload.sheetName);
@@ -1810,6 +2208,7 @@ function doPost(e) {
       }
 
       cleanupEmptyBenefitColumns(sheet);
+      invalidateSummaryCache_();
 
       return jsonResponse({ status: "success", action: "append" });
     }
@@ -1839,6 +2238,7 @@ function doPost(e) {
       }
 
       cleanupEmptyBenefitColumns(sheet);
+      invalidateSummaryCache_();
 
       return jsonResponse({ status: "success", action: "update" });
     }
