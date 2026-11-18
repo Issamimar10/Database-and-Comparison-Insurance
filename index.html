@@ -3318,7 +3318,64 @@
             }
         }
 
-        function toggleAddFilterMenu(event) {
+        function getDynamicAddFilterPool() {
+            const search = (document.getElementById("searchInput")?.value || "").toLowerCase();
+            const baseKeys = ["category", "company", "type", "channel", "currency", "year", "underwriting"];
+            return products.filter(p => {
+                if (search) {
+                    const matchSearch = String(p.name || "").toLowerCase().includes(search) || String(p.company || "").toLowerCase().includes(search);
+                    if (!matchSearch) return false;
+                }
+                for (const k of baseKeys) {
+                    if (!productMatchesFilterKey(p, k)) return false;
+                }
+                return true;
+            });
+        }
+
+        function isColumnRelevantToCurrentContext(colName, contextPool) {
+            if (!colName) return false;
+            const lw = String(colName).trim().toLowerCase();
+            if (customFilterColumns.some(c => c.toLowerCase() === lw)) return true;
+
+            const activeCategories = (Array.isArray(activeFilters.category) && activeFilters.category.length > 0)
+                ? activeFilters.category
+                : [...new Set(contextPool.map(p => p.category).filter(Boolean))];
+
+            if (activeCategories.length === 0) return false;
+
+            const hasSharia = activeCategories.some(cat => /^(sharia|syariah)$/i.test(String(cat || "").trim()));
+            const hasDplk = activeCategories.some(cat => /^dplk$/i.test(String(cat || "").trim()));
+            const hasNonDplk = activeCategories.some(cat => !/^dplk$/i.test(String(cat || "").trim()));
+
+            if (lw === "par/non par") {
+                if (isFullProductDataLoaded) {
+                    return contextPool.some(p => p.par && !isEmptyVal(p.par));
+                }
+                return hasNonDplk;
+            }
+
+            if (!hasSharia && isSyariahSpecColumn(colName)) return false;
+            if (!hasDplk && (isDplkSpecColumn(colName) || isDplkChargeColumn(colName) || isDplkBenefitColumn(colName))) return false;
+            if (!hasNonDplk && ["coverage period", "premium payment period (ppp)", "min sum assured", "available riders"].includes(lw)) return false;
+
+            const existsInActiveSheet = activeCategories.some(cat => {
+                const cols = sheetColumnsMap[cat];
+                return Array.isArray(cols) && cols.includes(lw);
+            });
+            if (!existsInActiveSheet) return false;
+
+            if (isFullProductDataLoaded) {
+                return contextPool.some(p => {
+                    const val = getProductAttrCaseInsensitive(p, colName);
+                    return val && !isEmptyVal(val);
+                });
+            }
+
+            return true;
+        }
+
+        async function toggleAddFilterMenu(event) {
             if (event) event.stopPropagation();
             const menuId = "addFilterDropdown";
             document.querySelectorAll('.dropdown-content').forEach(el => {
@@ -3330,6 +3387,12 @@
             if (willOpen) {
                 renderAddFilterMenu();
                 menu.classList.remove('hidden');
+                if (!isFullProductDataLoaded) {
+                    await ensureFullProductDataLoaded();
+                    if (!menu.classList.contains('hidden')) {
+                        renderAddFilterMenu();
+                    }
+                }
             } else {
                 menu.classList.add('hidden');
             }
@@ -3339,13 +3402,19 @@
             const menu = document.getElementById("addFilterDropdown");
             if (!menu) return;
 
+            const prevSearchEl = document.getElementById("addFilterMenuSearchInput");
+            const hadSearchFocus = prevSearchEl && document.activeElement === prevSearchEl;
+            const selStart = hadSearchFocus ? prevSearchEl.selectionStart : null;
+
             const builtInCols = new Set(["product name", "company name", "launch date", "tanggal rilis", "product type", "distribution channel", "currency", "underwriting method"]);
+            const contextPool = getDynamicAddFilterPool();
             const candidateCols = [];
             const seenLower = new Set();
             const addCand = (col, group) => {
                 if (!col) return;
                 const lw = String(col).trim().toLowerCase();
                 if (!lw || builtInCols.has(lw) || seenLower.has(lw)) return;
+                if (!isColumnRelevantToCurrentContext(col, contextPool)) return;
                 seenLower.add(lw);
                 candidateCols.push({ col, group });
             };
@@ -3361,17 +3430,17 @@
             menu.innerHTML = `
                 <div class="sticky top-0 bg-white dark:bg-gray-800 pb-2 border-b dark:border-gray-700 space-y-1.5 z-10">
                     <div class="flex items-center justify-between">
-                        <span class="font-bold text-[11px] text-gray-700 dark:text-gray-200 uppercase tracking-wider">Add / Remove Filters</span>
+                        <span class="font-bold text-[11px] text-gray-700 dark:text-gray-200 uppercase tracking-wider">Add / Remove Filters (${candidateCols.length})</span>
                         ${customFilterColumns.length > 0 ? `<button type="button" onclick="removeAllCustomFilters(event)" class="text-[11px] font-semibold text-red-500 hover:underline">Remove All (${customFilterColumns.length})</button>` : ""}
                     </div>
-                    <input type="text" value="${escapeHtmlAttr(addFilterSearchQuery)}"
+                    <input type="text" id="addFilterMenuSearchInput" value="${escapeHtmlAttr(addFilterSearchQuery)}"
                            oninput="addFilterSearchQuery = this.value; renderAddFilterMenu();"
                            onclick="event.stopPropagation()"
                            placeholder="Search database column..."
                            class="w-full px-2 py-1 text-xs border dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 outline-none focus:ring-1 focus:ring-blue-500">
                 </div>
                 <div class="pt-1.5 space-y-0.5">
-                    ${filtered.length === 0 ? `<p class="text-center text-gray-400 py-3">No matching columns found.</p>` : filtered.map(item => {
+                    ${filtered.length === 0 ? `<p class="text-center text-gray-400 py-3 text-xs">No matching columns for current filters.</p>` : filtered.map(item => {
                         const isAdded = customFilterColumns.some(c => c.toLowerCase() === item.col.toLowerCase());
                         return `
                             <label class="flex items-center justify-between gap-2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onclick="event.stopPropagation()">
@@ -3386,6 +3455,14 @@
                     }).join("")}
                 </div>
             `;
+
+            if (hadSearchFocus) {
+                const restored = document.getElementById("addFilterMenuSearchInput");
+                if (restored) {
+                    restored.focus();
+                    if (selStart !== null) restored.setSelectionRange(selStart, selStart);
+                }
+            }
         }
 
         async function toggleCustomFilterColumn(colName, enabled, event) {
@@ -3997,6 +4074,10 @@
 
                     applyFullSheetDataToProducts(data.sheets);
                     isFullProductDataLoaded = true;
+                    populateAllDropdowns();
+                    if (customFilterColumns.some(c => Array.isArray(activeFilters[getCustomFilterKey(c)]) && activeFilters[getCustomFilterKey(c)].length > 0)) {
+                        filterData();
+                    }
 
                     const detailModalEl = document.getElementById("detailModal");
                     if (currentActiveProduct && !isEditMode && detailModalEl && !detailModalEl.classList.contains("hidden")) {
@@ -4726,6 +4807,10 @@
                 const opts = getDynamicFilterOptions(filterKey);
                 buildDropdownUI(filterKey, opts);
             });
+            const addMenu = document.getElementById("addFilterDropdown");
+            if (addMenu && !addMenu.classList.contains("hidden")) {
+                renderAddFilterMenu();
+            }
             updateResetAllFiltersVisibility();
         }
 
