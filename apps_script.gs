@@ -48,6 +48,258 @@ function getOrCreateRootDocFolder() {
   return rootFolder;
 }
 
+// ====================================================
+// HELPER KEAMANAN GLOBAL (SESSION, VALIDASI FILE, RESERVED SHEETS, ESCAPING)
+// ====================================================
+const RESERVED_SYSTEM_SHEETS_ = {
+  "config": true,
+  "users": true,
+  "documents": true
+};
+const MAX_UPLOAD_BASE64_CHARS = 35 * 1024 * 1024; // ~25 MB biner
+const MAX_APPEND_ROWS = 2000;
+const SESSION_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+const SESSION_REMEMBER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isReservedSystemSheet_(sheetName) {
+  const lower = String(sheetName || "").trim().toLowerCase();
+  return Boolean(lower && RESERVED_SYSTEM_SHEETS_[lower]);
+}
+
+function escapeHtmlServer_(str) {
+  return String(str === undefined || str === null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function constantTimeEquals_(a, b) {
+  const strA = String(a === undefined || a === null ? "" : a);
+  const strB = String(b === undefined || b === null ? "" : b);
+  const maxLen = Math.max(strA.length, strB.length);
+  let diff = strA.length ^ strB.length;
+  for (let i = 0; i < maxLen; i++) {
+    const ca = i < strA.length ? strA.charCodeAt(i) : 0;
+    const cb = i < strB.length ? strB.charCodeAt(i) : 0;
+    diff |= (ca ^ cb);
+  }
+  return diff === 0;
+}
+
+function bytesToHex_(bytes) {
+  return bytes.map(function(b) {
+    const v = (b < 0) ? b + 256 : b;
+    return ("0" + v.toString(16)).slice(-2);
+  }).join("");
+}
+
+function getOrCreateSessionSecret_() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty("IDCM_SESSION_HMAC_SECRET");
+  if (!secret) {
+    secret = Utilities.getUuid() + ":" + Utilities.getUuid();
+    props.setProperty("IDCM_SESSION_HMAC_SECRET", secret);
+  }
+  return secret;
+}
+
+function pruneExpiredSessions_(props) {
+  try {
+    const all = props.getProperties();
+    const now = Date.now();
+    Object.keys(all).forEach(function(k) {
+      if (k.indexOf("SESSION_") === 0) {
+        try {
+          const parsed = JSON.parse(all[k]);
+          if (!parsed || !parsed.expiresAt || now > Number(parsed.expiresAt)) {
+            props.deleteProperty(k);
+          }
+        } catch (e) {
+          props.deleteProperty(k);
+        }
+      }
+    });
+  } catch (e) {}
+}
+
+function issueSessionToken_(username, email, ttlMs) {
+  const cleanUser = String(username || "").trim();
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const duration = (typeof ttlMs === "number" && ttlMs > 0)
+    ? Math.min(ttlMs, SESSION_REMEMBER_TTL_MS)
+    : SESSION_DEFAULT_TTL_MS;
+  const now = Date.now();
+  const expiresAt = now + duration;
+  const secret = getOrCreateSessionSecret_();
+  const entropy = Utilities.getUuid() + "::" + Utilities.getUuid() + "::" + cleanUser + "::" + now;
+  const sigBytes = Utilities.computeHmacSha256Signature(entropy, secret);
+  const token = bytesToHex_(sigBytes);
+  const record = {
+    username: cleanUser,
+    email: cleanEmail,
+    issuedAt: now,
+    expiresAt: expiresAt
+  };
+  const serialized = JSON.stringify(record);
+  const key = "SESSION_" + token;
+
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.put(key, serialized, Math.min(21600, Math.max(60, Math.floor(duration / 1000))));
+  } catch (e) {}
+
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(key, serialized);
+  if (Math.floor(now / 1000) % 20 === 0) {
+    pruneExpiredSessions_(props);
+  }
+
+  return { token: token, expiresAt: expiresAt };
+}
+
+function verifySessionToken_(token) {
+  const cleanToken = String(token || "").trim();
+  if (!/^[a-f0-9]{64}$/i.test(cleanToken)) return null;
+  const key = "SESSION_" + cleanToken.toLowerCase();
+
+  try {
+    const cached = CacheService.getScriptCache().get(key);
+    if (cached) {
+      const parsedC = JSON.parse(cached);
+      if (parsedC && parsedC.username && Date.now() <= Number(parsedC.expiresAt)) {
+        return parsedC;
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.username || Date.now() > Number(parsed.expiresAt)) {
+      props.deleteProperty(key);
+      return null;
+    }
+    try {
+      const remSec = Math.min(21600, Math.max(60, Math.floor((Number(parsed.expiresAt) - Date.now()) / 1000)));
+      CacheService.getScriptCache().put(key, raw, remSec);
+    } catch (e) {}
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function revokeSessionToken_(token) {
+  const cleanToken = String(token || "").trim();
+  if (!/^[a-f0-9]{64}$/i.test(cleanToken)) return;
+  const key = "SESSION_" + cleanToken.toLowerCase();
+  try { CacheService.getScriptCache().remove(key); } catch (e) {}
+  try { PropertiesService.getScriptProperties().deleteProperty(key); } catch (e) {}
+}
+
+function revokeAllUserSessions_(username) {
+  const targetLower = String(username || "").trim().toLowerCase();
+  if (!targetLower) return;
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const all = props.getProperties();
+    const cache = CacheService.getScriptCache();
+    Object.keys(all).forEach(function(k) {
+      if (k.indexOf("SESSION_") === 0) {
+        try {
+          const parsed = JSON.parse(all[k]);
+          if (parsed && String(parsed.username || "").trim().toLowerCase() === targetLower) {
+            props.deleteProperty(k);
+            try { cache.remove(k); } catch (ce) {}
+          }
+        } catch (e) {}
+      }
+    });
+  } catch (e) {}
+}
+
+function isFileInsideRootFolder_(file, rootFolder) {
+  if (!file || !rootFolder) return false;
+  const rootId = rootFolder.getId();
+  const visited = {};
+  const queue = [];
+
+  try {
+    const parents = file.getParents();
+    while (parents.hasNext()) {
+      const p = parents.next();
+      if (p) queue.push({ folder: p, depth: 1 });
+    }
+  } catch (e) {
+    return false;
+  }
+
+  while (queue.length > 0) {
+    const item = queue.shift();
+    const f = item.folder;
+    const fid = f.getId();
+    if (fid === rootId) return true;
+    if (visited[fid] || item.depth >= 4) continue;
+    visited[fid] = true;
+    try {
+      const gp = f.getParents();
+      while (gp.hasNext()) {
+        const nextF = gp.next();
+        if (nextF && !visited[nextF.getId()]) {
+          queue.push({ folder: nextF, depth: item.depth + 1 });
+        }
+      }
+    } catch (e) {}
+  }
+  return false;
+}
+
+function assertAccessibleProductFile_(fileId) {
+  const cleanId = String(fileId || "").trim();
+  if (!cleanId) throw new Error("fileId tidak valid.");
+  const file = DriveApp.getFileById(cleanId);
+  if (file.isTrashed()) {
+    throw new Error("File sudah dihapus (trashed).");
+  }
+  const rootFolder = getOrCreateRootDocFolder();
+  if (!isFileInsideRootFolder_(file, rootFolder)) {
+    throw new Error("Akses ditolak: file berada di luar folder dokumen aplikasi.");
+  }
+  return file;
+}
+
+function purgePdfPreviewCacheForFile_(fileId) {
+  const cleanId = String(fileId || "").trim();
+  if (!cleanId) return;
+  try {
+    const cacheFolder = getPdfPreviewCacheFolder_();
+    const prefix = "pdfprev_" + cleanId + "_";
+    const files = cacheFolder.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      try {
+        if (String(f.getName() || "").indexOf(prefix) === 0) {
+          f.setTrashed(true);
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+function secureTrashDriveFile_(file) {
+  if (!file) return;
+  const fid = file.getId();
+  try {
+    file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+  } catch (e) {}
+  purgePdfPreviewCacheForFile_(fid);
+  file.setTrashed(true);
+}
+
 // Helper: Baca seluruh tab produk sekaligus via Google Sheets Advanced Service (batchGet),
 // atau fallback otomatis ke sheet.getDataRange().getDisplayValues() jika Sheets API belum diaktifkan.
 function readSheetsBatchOrFallback_(ss, tabNames) {
@@ -266,7 +518,7 @@ const CONFIG_HEADERS_4COL_ = ["Kategori", "Nama Utama", "Nilai / Nama Lain", "Ke
 const DEFAULT_CONFIG_ROWS_ = [
   // 1. Pengaturan Sistem
   ["Setting", "Drive Folder ID", "", "ID folder utama Google Drive tempat menyimpan dokumen produk (kosongkan untuk otomatis memakai folder IDCM Test)"],
-  ["Setting", "Invite Code", "IDCM2026", "Kode akses rahasia untuk pendaftaran akun baru (Sign Up)"],
+  ["Setting", "Invite Code", "", "Kode akses rahasia untuk pendaftaran akun baru (wajib diisi oleh Admin sebelum Sign Up dapat digunakan)"],
 
   // 2. Daftar Sheet / Kategori Produk
   ["Sheet", "Conventional", "Traditional, Konven", "Nama tab sheet produk konvensional di Master Spreadsheet"],
@@ -943,8 +1195,10 @@ function saveSheetCategoryConfig_(ss, payload) {
 
   const lastCol = targetSheet.getLastColumn();
   if (lastCol === 0 || targetSheet.getLastRow() === 0) {
-    targetSheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
-    targetSheet.getRange(1, 1, 1, requiredHeaders.length).setFontWeight("bold");
+    const hdrRange = targetSheet.getRange(1, 1, 1, requiredHeaders.length);
+    hdrRange.setNumberFormat("@");
+    hdrRange.setValues([requiredHeaders]);
+    hdrRange.setFontWeight("bold");
   } else {
     const existingHeaders = targetSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) { return String(h || "").trim(); });
     const existingLower = existingHeaders.map(function(h) { return h.toLowerCase(); });
@@ -957,8 +1211,10 @@ function saveSheetCategoryConfig_(ss, payload) {
     });
     if (colsToAdd.length > 0) {
       const startCol = existingHeaders.length + 1;
-      targetSheet.getRange(1, startCol, 1, colsToAdd.length).setValues([colsToAdd]);
-      targetSheet.getRange(1, startCol, 1, colsToAdd.length).setFontWeight("bold");
+      const addHdrRange = targetSheet.getRange(1, startCol, 1, colsToAdd.length);
+      addHdrRange.setNumberFormat("@");
+      addHdrRange.setValues([colsToAdd]);
+      addHdrRange.setFontWeight("bold");
     }
   }
 
@@ -1053,11 +1309,13 @@ function saveSheetCategoryConfig_(ss, payload) {
     }
   });
 
-  configSheet.clearContents();
   const writeRange = configSheet.getRange(1, 1, retainedRows.length, 4);
   writeRange.setNumberFormat("@");
   writeRange.setValues(retainedRows);
   configSheet.getRange(1, 1, 1, 4).setFontWeight("bold");
+  if (cfgLastRow > retainedRows.length) {
+    configSheet.getRange(retainedRows.length + 1, 1, cfgLastRow - retainedRows.length, cfgCols).clearContent();
+  }
 
   invalidateSummaryCache_();
   return buildAllProductDataResponse("summary", true).config;
@@ -1341,8 +1599,27 @@ function listAllProductDocumentsFast_() {
 }
 
 function doGet(e) {
+  const action = (e && e.parameter && e.parameter.action) ? String(e.parameter.action).trim() : "";
+  const protectedGetActions = {
+    "get_all_product_data": true,
+    "get_all_documents": true,
+    "get_file_base64": true
+  };
+
+  if (protectedGetActions[action]) {
+    const token = (e && e.parameter && e.parameter.sessionToken) ? String(e.parameter.sessionToken) : "";
+    const activeSession = verifySessionToken_(token);
+    if (!activeSession) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Sesi tidak valid atau telah berakhir. Silakan Sign In kembali."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
   // 0. Ambil seluruh data produk & konfigurasi aman langsung via Apps Script (Tanpa perlu /gviz/tq publik)
-  if (e && e.parameter && e.parameter.action === "get_all_product_data") {
+  if (action === "get_all_product_data") {
     try {
       const bypassCache = e.parameter.nocache === "1" || e.parameter.nocache === "true";
       const result = buildAllProductDataResponse(e.parameter.mode, bypassCache);
@@ -1359,7 +1636,7 @@ function doGet(e) {
   }
 
   // 1. Ambil daftar seluruh dokumen langsung dari folder Google Drive (Tanpa Sheet 'Documents')
-  if (e && e.parameter && e.parameter.action === "get_all_documents") {
+  if (action === "get_all_documents") {
     try {
       const docResult = listAllProductDocumentsFast_();
       return ContentService.createTextOutput(JSON.stringify({
@@ -1375,16 +1652,16 @@ function doGet(e) {
 
   // 2. Dukungan untuk mengambil base64 file Google Drive langsung tanpa kendala CORS
   // Mendukung konversi otomatis file Office (.docx / .xlsx) ke PDF untuk pratinjau instan di web
-  if (e && e.parameter && e.parameter.action === "get_file_base64" && e.parameter.fileId) {
+  if (action === "get_file_base64" && e.parameter.fileId) {
     try {
-      const file = DriveApp.getFileById(e.parameter.fileId);
+      const file = assertAccessibleProductFile_(e.parameter.fileId);
       const asPdf = e.parameter.asPdf === "true" || e.parameter.asPdf === true;
       let blob;
       let mimeType;
-      
+
       if (asPdf) {
         try {
-          blob = file.getAs("application/pdf");
+          blob = convertOfficeFileToPdfBlob(file);
           mimeType = "application/pdf";
         } catch (convErr) {
           blob = file.getBlob();
@@ -1425,6 +1702,36 @@ function doPost(e) {
 
     // Batas karakter per sel Google Sheets
     const MAX_CELL_CHARS = 50000;
+
+    function jsonResponse(obj) {
+      return ContentService.createTextOutput(JSON.stringify(obj))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const PUBLIC_AUTH_ACTIONS = {
+      "auth_signup": true,
+      "auth_signin": true,
+      "auth_request_otp": true,
+      "auth_reset_password": true,
+      "auth_logout": true
+    };
+
+    const reqAction = String((payload && payload.action) || "").trim();
+    if (!PUBLIC_AUTH_ACTIONS[reqAction]) {
+      const activeSession = verifySessionToken_(payload && payload.sessionToken);
+      if (!activeSession) {
+        return jsonResponse({
+          status: "error",
+          code: "UNAUTHORIZED",
+          message: "Sesi tidak valid atau telah berakhir. Silakan Sign In kembali."
+        });
+      }
+    }
+
+    if (reqAction === "auth_logout") {
+      revokeSessionToken_(payload && payload.sessionToken);
+      return jsonResponse({ status: "success", action: "auth_logout" });
+    }
 
     // Helper: Ambil daftar PROTECTED_COLS (Seluruh kolom Core & Non-Benefit — baik bawaan maupun yang baru ditambahkan di Config — di-lock / tidak dihapus otomatis; sedangkan Benefit akan dihapus otomatis jika kosong di semua produk)
     function getProtectedCols(sheetName) {
@@ -1481,7 +1788,9 @@ function doPost(e) {
       }
 
       if (sheetHeaders.length === 0 || sheetHeaders.every(h => h === "")) {
-        targetSheet.getRange(1, 1, 1, incomingHeaders.length).setValues([incomingHeaders]);
+        const initHdrRange = targetSheet.getRange(1, 1, 1, incomingHeaders.length);
+        initHdrRange.setNumberFormat("@");
+        initHdrRange.setValues([incomingHeaders]);
         return incomingHeaders;
       }
 
@@ -1499,7 +1808,9 @@ function doPost(e) {
 
       if (newColsToAdd.length > 0) {
         const startCol = sheetHeaders.length + 1;
-        targetSheet.getRange(1, startCol, 1, newColsToAdd.length).setValues([newColsToAdd]);
+        const addHdrRange = targetSheet.getRange(1, startCol, 1, newColsToAdd.length);
+        addHdrRange.setNumberFormat("@");
+        addHdrRange.setValues([newColsToAdd]);
         sheetHeaders = sheetHeaders.concat(newColsToAdd);
       }
 
@@ -1641,13 +1952,50 @@ function doPost(e) {
     // ====================================================
     // 0. SISTEM AUTENTIKASI (SIGN UP, SIGN IN, FORGOT PASSWORD OTP EMAIL)
     // ====================================================
-    function hashPasswordWithSalt(password, salt) {
+    function legacySingleSha256_(password, salt) {
       const raw = String(salt || "") + "::IDCM_AUTH::" + String(password || "");
       const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
-      return digest.map(function(b) {
-        const v = (b < 0) ? b + 256 : b;
-        return ("0" + v.toString(16)).slice(-2);
-      }).join("");
+      return bytesToHex_(digest);
+    }
+
+    function hashPasswordWithSalt(password, salt, iterations) {
+      const iters = (typeof iterations === "number" && iterations >= 1000) ? iterations : 2500;
+      const prefix = String(salt || "") + "::IDCM_AUTH::" + String(password || "");
+      let block = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, prefix, Utilities.Charset.UTF_8);
+      for (let i = 1; i < iters; i++) {
+        block = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, block);
+      }
+      return "pbkdf2_sha256_" + iters + "$" + bytesToHex_(block);
+    }
+
+    function verifyPasswordAutoMigrate_(password, storedHash, storedSalt) {
+      const stored = String(storedHash || "").trim();
+      const m = stored.match(/^pbkdf2_sha256_(\d+)\$([a-f0-9]+)$/i);
+      if (m) {
+        const iters = Math.max(1000, Math.min(20000, parseInt(m[1], 10) || 2500));
+        const candidate = hashPasswordWithSalt(password, storedSalt, iters);
+        return { ok: constantTimeEquals_(candidate, stored), needsRehash: iters < 2500 };
+      }
+      const legacyCandidate = legacySingleSha256_(password, storedSalt);
+      const ok = constantTimeEquals_(legacyCandidate, stored);
+      return { ok: ok, needsRehash: ok };
+    }
+
+    function hashOtp_(otp, salt) {
+      const raw = String(salt || "") + "::IDCM_OTP::" + String(otp || "");
+      const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+      return "otp_sha256$" + bytesToHex_(digest);
+    }
+
+    function generateSecureOtp6_() {
+      const seed = Utilities.getUuid() + "::" + Utilities.getUuid() + "::" + Date.now();
+      const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, seed, Utilities.Charset.UTF_8);
+      const b0 = (digest[0] < 0) ? digest[0] + 256 : digest[0];
+      const b1 = (digest[1] < 0) ? digest[1] + 256 : digest[1];
+      const b2 = (digest[2] < 0) ? digest[2] + 256 : digest[2];
+      const b3 = (digest[3] < 0) ? digest[3] + 256 : digest[3];
+      const uint32 = (((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) >>> 0);
+      return String(100000 + (uint32 % 900000));
     }
 
     function getOrCreateUsersSheet() {
@@ -1655,20 +2003,23 @@ function doPost(e) {
       const headers = ["Username", "Email", "PasswordHash", "Salt", "CreatedAt", "ResetOTP", "OTPExpiry", "LastLogin"];
       if (!uSheet) {
         uSheet = ss.insertSheet("Users");
-        uSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-        uSheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+        const r = uSheet.getRange(1, 1, 1, headers.length);
+        r.setNumberFormat("@");
+        r.setValues([headers]);
+        r.setFontWeight("bold");
       } else if (uSheet.getLastRow() === 0) {
-        uSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-        uSheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+        const r = uSheet.getRange(1, 1, 1, headers.length);
+        r.setNumberFormat("@");
+        r.setValues([headers]);
+        r.setFontWeight("bold");
       }
       return uSheet;
     }
 
     function getSignupInviteCode() {
-      const DEFAULT_INVITE_CODE = "IDCM2026";
       try {
         const configSheet = ss.getSheetByName("Config");
-        if (!configSheet) return DEFAULT_INVITE_CODE;
+        if (!configSheet) return "";
         const cfgData = configSheet.getDataRange().getValues();
         for (let i = 1; i < cfgData.length; i++) {
           const key = String(cfgData[i][1] || "").trim().toLowerCase();
@@ -1677,12 +2028,10 @@ function doPost(e) {
             if (codeVal) return codeVal;
           }
         }
-        // Jika belum ada baris Invite Code di Sheet Config, tambahkan otomatis agar mudah diubah admin
-        configSheet.appendRow(["Setting", "Invite Code", DEFAULT_INVITE_CODE, "Kode akses rahasia untuk pendaftaran akun baru (Sign Up)"]);
       } catch (e) {
         console.warn("Gagal membaca Invite Code dari Config:", e);
       }
-      return DEFAULT_INVITE_CODE;
+      return "";
     }
 
     function maskEmailAddress(email) {
@@ -1702,8 +2051,8 @@ function doPost(e) {
       const password = String(payload.password || "");
       const inviteCode = String(payload.inviteCode || "").trim();
 
-      if (username.length < 3) {
-        return jsonResponse({ status: "error", message: "Username minimal harus 3 karakter." });
+      if (username.length < 3 || username.length > 64) {
+        return jsonResponse({ status: "error", message: "Username harus antara 3 hingga 64 karakter." });
       }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return jsonResponse({ status: "error", message: "Format alamat email tidak valid." });
@@ -1713,7 +2062,10 @@ function doPost(e) {
       }
 
       const validInviteCode = getSignupInviteCode();
-      if (inviteCode !== validInviteCode) {
+      if (!validInviteCode) {
+        return jsonResponse({ status: "error", message: "Pendaftaran ditutup sementara: Invite Code belum dikonfigurasi oleh Administrator di sheet Config." });
+      }
+      if (!constantTimeEquals_(inviteCode, validInviteCode)) {
         return jsonResponse({ status: "error", message: "Kode Akses Tim (Invite Code) tidak sesuai." });
       }
 
@@ -1731,13 +2083,16 @@ function doPost(e) {
       }
 
       const salt = Utilities.getUuid();
-      const pwdHash = hashPasswordWithSalt(password, salt);
+      const pwdHash = hashPasswordWithSalt(password, salt, 2500);
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
       writeRowAsPlainText(uSheet, uSheet.getLastRow() + 1, [username, email, pwdHash, salt, nowStr, "", "", nowStr]);
 
+      const sessionObj = issueSessionToken_(username, email, SESSION_REMEMBER_TTL_MS);
       return jsonResponse({
         status: "success",
         action: "auth_signup",
+        sessionToken: sessionObj.token,
+        expiresAt: sessionObj.expiresAt,
         user: { username: username, email: email }
       });
     }
@@ -1746,6 +2101,7 @@ function doPost(e) {
     if (payload.action === "auth_signin") {
       const identifier = String(payload.identifier || "").trim().toLowerCase();
       const password = String(payload.password || "");
+      const rememberMe = payload.rememberMe !== false;
 
       if (!identifier || !password) {
         return jsonResponse({ status: "error", message: "Mohon isi Username/Email dan Password." });
@@ -1764,27 +2120,40 @@ function doPost(e) {
       }
 
       if (foundRowIdx === -1) {
-        return jsonResponse({ status: "error", message: "Akun tidak ditemukan. Periksa kembali Username/Email Anda atau daftar akun baru." });
+        return jsonResponse({ status: "error", message: "Username/Email atau Password tidak sesuai." });
       }
 
       const row = uData[foundRowIdx];
       const storedHash = String(row[2] || "").trim();
       const storedSalt = String(row[3] || "").trim();
-      const computedHash = hashPasswordWithSalt(password, storedSalt);
+      const pwdCheck = verifyPasswordAutoMigrate_(password, storedHash, storedSalt);
 
-      if (computedHash !== storedHash) {
-        return jsonResponse({ status: "error", message: "Password yang Anda masukkan salah." });
+      if (!pwdCheck.ok) {
+        return jsonResponse({ status: "error", message: "Username/Email atau Password tidak sesuai." });
+      }
+
+      if (pwdCheck.needsRehash) {
+        const newSalt = Utilities.getUuid();
+        const upgradedHash = hashPasswordWithSalt(password, newSalt, 2500);
+        uSheet.getRange(foundRowIdx + 1, 3, 1, 2).setNumberFormats([["@", "@"]]).setValues([[upgradedHash, newSalt]]);
       }
 
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
       uSheet.getRange(foundRowIdx + 1, 8).setNumberFormat("@").setValue(nowStr);
 
+      const uname = String(row[0] || "").trim();
+      const uemail = String(row[1] || "").trim();
+      const ttlMs = rememberMe ? SESSION_REMEMBER_TTL_MS : SESSION_DEFAULT_TTL_MS;
+      const sessionObj = issueSessionToken_(uname, uemail, ttlMs);
+
       return jsonResponse({
         status: "success",
         action: "auth_signin",
+        sessionToken: sessionObj.token,
+        expiresAt: sessionObj.expiresAt,
         user: {
-          username: String(row[0] || "").trim(),
-          email: String(row[1] || "").trim()
+          username: uname,
+          email: uemail
         }
       });
     }
@@ -1809,20 +2178,39 @@ function doPost(e) {
       }
 
       if (foundRowIdx === -1) {
-        return jsonResponse({ status: "error", message: "Akun dengan Email/Username tersebut tidak ditemukan." });
+        return jsonResponse({
+          status: "success",
+          action: "auth_request_otp",
+          message: "Jika akun terdaftar, kode OTP 6 digit telah dikirim ke email terkait."
+        });
       }
 
       const targetUsername = String(uData[foundRowIdx][0] || "").trim();
       const targetEmail = String(uData[foundRowIdx][1] || "").trim();
-      const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+      const userSalt = String(uData[foundRowIdx][3] || "").trim();
+
+      const cache = CacheService.getScriptCache();
+      const cooldownKey = "OTP_COOLDOWN_" + targetUsername.toLowerCase();
+      if (cache.get(cooldownKey)) {
+        return jsonResponse({ status: "error", message: "Mohon tunggu 60 detik sebelum meminta kode OTP baru." });
+      }
+      if (MailApp.getRemainingDailyQuota() <= 5) {
+        return jsonResponse({ status: "error", message: "Kuota pengiriman email harian server hampir habis. Hubungi Administrator." });
+      }
+
+      const otpCode = generateSecureOtp6_();
+      const otpHash = hashOtp_(otpCode, userSalt);
       const expiryMs = String(Date.now() + 10 * 60 * 1000); // Berlaku 10 menit
 
-      uSheet.getRange(foundRowIdx + 1, 6, 1, 2).setNumberFormats([["@", "@"]]).setValues([[otpCode, expiryMs]]);
+      uSheet.getRange(foundRowIdx + 1, 6, 1, 2).setNumberFormats([["@", "@"]]).setValues([[otpHash, expiryMs]]);
+      cache.put(cooldownKey, "1", 60);
+      cache.remove("OTP_FAILS_" + targetUsername.toLowerCase());
 
+      const safeDisplayUsername = escapeHtmlServer_(targetUsername);
       const emailHtml = [
         "<div style='font-family:Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;color:#1e293b;'>",
         "<h2 style='margin:0 0 12px 0;color:#1e3a8a;font-size:18px;'>Reset Password — Comparison Maker</h2>",
-        "<p style='font-size:14px;line-height:1.5;margin:0 0 16px 0;'>Halo <strong>" + targetUsername + "</strong>,</p>",
+        "<p style='font-size:14px;line-height:1.5;margin:0 0 16px 0;'>Halo <strong>" + safeDisplayUsername + "</strong>,</p>",
         "<p style='font-size:14px;line-height:1.5;margin:0 0 16px 0;'>Berikut adalah kode OTP 6 digit untuk mereset password akun Anda (berlaku selama <strong>10 menit</strong>):</p>",
         "<div style='background:#eff6ff;border:1px dashed #3b82f6;border-radius:10px;padding:16px;text-align:center;font-size:28px;font-weight:bold;letter-spacing:6px;color:#1d4ed8;margin-bottom:16px;'>" + otpCode + "</div>",
         "<p style='font-size:12px;color:#64748b;margin:0;'>Jika Anda tidak merasa meminta pengaturan ulang password, abaikan email ini.</p>",
@@ -1869,32 +2257,57 @@ function doPost(e) {
       }
 
       if (foundRowIdx === -1) {
-        return jsonResponse({ status: "error", message: "Akun tidak ditemukan." });
+        return jsonResponse({ status: "error", message: "Kode OTP tidak valid atau sudah kedaluwarsa." });
       }
 
+      const targetUsername = String(uData[foundRowIdx][0] || "").trim();
+      const targetEmail = String(uData[foundRowIdx][1] || "").trim();
+      const userSalt = String(uData[foundRowIdx][3] || "").trim();
       const savedOtp = String(uData[foundRowIdx][5] || "").trim();
       const savedExpiry = Number(uData[foundRowIdx][6] || 0);
 
-      if (!savedOtp || savedOtp !== otpInput) {
-        return jsonResponse({ status: "error", message: "Kode OTP tidak valid. Periksa kembali kode 6 digit di email Anda." });
-      }
-      if (Date.now() > savedExpiry) {
-        return jsonResponse({ status: "error", message: "Kode OTP sudah kedaluwarsa (lebih dari 10 menit). Silakan minta kode OTP baru." });
+      if (!savedOtp || Date.now() > savedExpiry) {
+        uSheet.getRange(foundRowIdx + 1, 6, 1, 2).setNumberFormats([["@", "@"]]).setValues([["", ""]]);
+        return jsonResponse({ status: "error", message: "Kode OTP sudah kedaluwarsa atau belum diminta. Silakan minta kode OTP baru." });
       }
 
+      const expectedOtpHash = hashOtp_(otpInput, userSalt);
+      const isOtpMatch = savedOtp.indexOf("otp_sha256$") === 0
+        ? constantTimeEquals_(savedOtp, expectedOtpHash)
+        : constantTimeEquals_(savedOtp, otpInput);
+
+      if (!isOtpMatch) {
+        const cache = CacheService.getScriptCache();
+        const failKey = "OTP_FAILS_" + targetUsername.toLowerCase();
+        const failCount = (parseInt(cache.get(failKey) || "0", 10) || 0) + 1;
+        if (failCount >= 5) {
+          uSheet.getRange(foundRowIdx + 1, 6, 1, 2).setNumberFormats([["@", "@"]]).setValues([["", ""]]);
+          cache.remove(failKey);
+          return jsonResponse({ status: "error", message: "Terlalu banyak percobaan OTP salah (5x). Kode OTP telah dihanguskan, silakan minta kode baru." });
+        }
+        cache.put(failKey, String(failCount), 600);
+        return jsonResponse({ status: "error", message: "Kode OTP tidak valid. Sisa percobaan: " + (5 - failCount) + "." });
+      }
+
+      CacheService.getScriptCache().remove("OTP_FAILS_" + targetUsername.toLowerCase());
       const newSalt = Utilities.getUuid();
-      const newHash = hashPasswordWithSalt(newPassword, newSalt);
+      const newHash = hashPasswordWithSalt(newPassword, newSalt, 2500);
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
 
       uSheet.getRange(foundRowIdx + 1, 3, 1, 2).setNumberFormats([["@", "@"]]).setValues([[newHash, newSalt]]);
       uSheet.getRange(foundRowIdx + 1, 6, 1, 3).setNumberFormats([["@", "@", "@"]]).setValues([["", "", nowStr]]);
 
+      revokeAllUserSessions_(targetUsername);
+      const sessionObj = issueSessionToken_(targetUsername, targetEmail, SESSION_DEFAULT_TTL_MS);
+
       return jsonResponse({
         status: "success",
         action: "auth_reset_password",
+        sessionToken: sessionObj.token,
+        expiresAt: sessionObj.expiresAt,
         user: {
-          username: String(uData[foundRowIdx][0] || "").trim(),
-          email: String(uData[foundRowIdx][1] || "").trim()
+          username: targetUsername,
+          email: targetEmail
         }
       });
     }
@@ -1903,18 +2316,23 @@ function doPost(e) {
     // 1. ACTION: UPLOAD_DOCUMENT (Simpan ke Google Drive langsung tanpa Sheet 'Documents')
     // ====================================================
     if (payload.action === "upload_document") {
+      const rawBase64 = String(payload.base64Data || "");
+      if (!rawBase64) {
+        return jsonResponse({ status: "error", message: "Data file kosong." });
+      }
+      if (rawBase64.length > MAX_UPLOAD_BASE64_CHARS) {
+        return jsonResponse({ status: "error", message: "Ukuran file melebihi batas maksimal 25 MB." });
+      }
+
       const rootFolder = getOrCreateRootDocFolder();
       const cleanProdName = String(payload.productName || "General").trim();
 
-      // Buat atau gunakan subfolder per produk di Google Drive
+      // Buat atau gunakan subfolder per produk di Google Drive (tetap privat, diakses melalui backend terautentikasi)
       const prodFolders = rootFolder.getFoldersByName(cleanProdName);
       const prodFolder = prodFolders.hasNext() ? prodFolders.next() : rootFolder.createFolder(cleanProdName);
-      try {
-        prodFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (e) {}
 
       // Decode base64 dan simpan file ke Drive
-      const decodedBytes = Utilities.base64Decode(payload.base64Data);
+      const decodedBytes = Utilities.base64Decode(rawBase64);
       const cleanFileName = String(payload.fileName || "dokumen").trim();
       const blob = Utilities.newBlob(decodedBytes, payload.mimeType || "application/octet-stream", cleanFileName);
       const file = prodFolder.createFile(blob);
@@ -1923,10 +2341,6 @@ function doPost(e) {
       if (payload.docType) {
         file.setDescription(String(payload.docType));
       }
-
-      try {
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (e) {}
 
       const fileId = file.getId();
       const viewUrl = file.getUrl();
@@ -1978,14 +2392,15 @@ function doPost(e) {
 
       if (payload.fileId) {
         try {
-          const file = DriveApp.getFileById(payload.fileId);
+          const file = assertAccessibleProductFile_(payload.fileId);
           const parents = file.getParents();
           while (parents.hasNext()) {
             parentFoldersToCheck.push(parents.next());
           }
-          file.setTrashed(true);
+          secureTrashDriveFile_(file);
         } catch (e) {
           console.error("Gagal trash file di Drive:", e);
+          return jsonResponse({ status: "error", message: String(e && e.message ? e.message : e) });
         }
       }
 
@@ -1998,6 +2413,7 @@ function doPost(e) {
             parentFolder.getName() !== "__TABLE_IMAGES__" &&
             isFolderCompletelyEmpty(parentFolder)
           ) {
+            try { parentFolder.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch (se) {}
             parentFolder.setTrashed(true);
           }
         } catch (e) {
@@ -2013,6 +2429,7 @@ function doPost(e) {
           while (subFolders.hasNext()) {
             const sf = subFolders.next();
             if (!sf.isTrashed() && sf.getName().trim().toLowerCase() === targetProd && isFolderCompletelyEmpty(sf)) {
+              try { sf.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch (se) {}
               sf.setTrashed(true);
             }
           }
@@ -2033,7 +2450,7 @@ function doPost(e) {
     //    asPdf: true -> file Word/PowerPoint dikonversi ke PDF khusus untuk preview
     // ====================================================
     if (payload.action === "get_file_base64" && payload.fileId) {
-      const file = DriveApp.getFileById(payload.fileId);
+      const file = assertAccessibleProductFile_(payload.fileId);
       const asPdf = payload.asPdf === true || payload.asPdf === "true";
       let blob = null;
       let mimeType = "";
@@ -2083,12 +2500,17 @@ function doPost(e) {
 
       const deletedProductNamesLower = {};
 
-      payload.items.forEach(function(item) {
+      for (let idx = 0; idx < payload.items.length; idx++) {
+        const item = payload.items[idx];
+        if (!item || isReservedSystemSheet_(item.sheetName)) {
+          return jsonResponse({ status: "error", message: "Akses ditolak: sheet sistem tidak dapat dihapus/dimodifikasi via aksi delete." });
+        }
+
         const targetName = String(item.productName || "").trim().toLowerCase();
         if (targetName) deletedProductNamesLower[targetName] = true;
 
         const sheet = ss.getSheetByName(item.sheetName);
-        if (!sheet) return;
+        if (!sheet) continue;
 
         const dataRange = sheet.getDataRange().getValues();
 
@@ -2111,13 +2533,14 @@ function doPost(e) {
             affectedSheets[item.sheetName] = sheet;
           }
         }
-      });
+      }
 
-      // 1. Hapus file Gambar Tabel di Google Drive jika dicentang
+      // 1. Hapus file Gambar Tabel di Google Drive jika dicentang (hanya yang ada di dalam rootFolder)
       if (deleteTableImages) {
         Object.keys(tableImageIdsToDelete).forEach(function(imgFileId) {
           try {
-            DriveApp.getFileById(imgFileId).setTrashed(true);
+            const imgFile = assertAccessibleProductFile_(imgFileId);
+            secureTrashDriveFile_(imgFile);
           } catch (e) {
             console.error("Gagal menghapus gambar tabel di Drive:", imgFileId, e);
           }
@@ -2134,15 +2557,16 @@ function doPost(e) {
               const sub = subFolders.next();
               if (sub.isTrashed()) continue;
               const folderNameLower = String(sub.getName() || "").trim().toLowerCase();
-              if (folderNameLower === "__table_images__") continue;
+              if (folderNameLower === "__table_images__" || folderNameLower === "_pdf_preview_cache") continue;
 
               if (deletedProductNamesLower[folderNameLower]) {
                 const files = sub.getFiles();
                 while (files.hasNext()) {
                   try {
-                    files.next().setTrashed(true);
+                    secureTrashDriveFile_(files.next());
                   } catch (fErr) {}
                 }
+                try { sub.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch (se) {}
                 sub.setTrashed(true);
               }
             }
@@ -2182,6 +2606,10 @@ function doPost(e) {
       });
     }
 
+    if (isReservedSystemSheet_(payload.sheetName)) {
+      return jsonResponse({ status: "error", message: "Akses ditolak: sheet sistem terproteksi (" + payload.sheetName + ")." });
+    }
+
     let sheet = ss.getSheetByName(payload.sheetName);
     if (!sheet && payload.sheetName) {
       sheet = ss.insertSheet(String(payload.sheetName).trim());
@@ -2194,6 +2622,13 @@ function doPost(e) {
     // 5. ACTION: APPEND (Upload Batch dari File Excel)
     // ====================================================
     if (payload.action === "append") {
+      if (!Array.isArray(payload.data) || payload.data.length === 0) {
+        return jsonResponse({ status: "error", message: "Data append kosong atau tidak valid." });
+      }
+      if (payload.data.length > MAX_APPEND_ROWS) {
+        return jsonResponse({ status: "error", message: "Jumlah baris melebihi batas maksimal (" + MAX_APPEND_ROWS + ")." });
+      }
+
       if (payload.headers && Array.isArray(payload.headers)) {
         const sheetHeaders = syncSheetHeaders(sheet, payload.headers);
 
@@ -2202,8 +2637,19 @@ function doPost(e) {
           writeRowAsPlainText(sheet, sheet.getLastRow() + 1, alignedRow, sheetHeaders);
         });
       } else {
-        payload.data.forEach(function(row) {
-          writeRowAsPlainText(sheet, sheet.getLastRow() + 1, row, payload.data[0] || []);
+        payload.data.forEach(function(row, idx) {
+          const safeRow = (Array.isArray(row) ? row : []).map(function(cell) {
+            let cellStr = (cell === undefined || cell === null) ? "-" : String(cell).trim();
+            if (cellStr.length > MAX_CELL_CHARS) {
+              cellStr = cellStr.substring(0, MAX_CELL_CHARS - 15) + "...[TRUNCATED]";
+            }
+            return cellStr;
+          });
+          if (idx === 0) {
+            writeRowAsPlainText(sheet, sheet.getLastRow() + 1, safeRow, safeRow);
+          } else {
+            writeRowAsPlainText(sheet, sheet.getLastRow() + 1, safeRow, payload.data[0] || []);
+          }
         });
       }
 

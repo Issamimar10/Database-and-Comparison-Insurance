@@ -4,11 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.sheetjs.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; img-src 'self' data: blob: https:; media-src 'self' blob: data:; frame-src 'self' blob: data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com data: blob:; object-src 'none'; base-uri 'self';">
     <link rel="preconnect" href="https://script.google.com">
     <link rel="preconnect" href="https://script.googleusercontent.com">
     <title>Life Insurance Database and Comparison Maker</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind CSS CDN (Pinned v3.4.17) -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
             darkMode: 'class'
@@ -16,6 +17,66 @@
         // Initialize theme early to prevent FOUC
         if (localStorage.getItem('theme') === 'dark') {
             document.documentElement.classList.add('dark');
+        }
+
+        // ====================================================
+        // GLOBAL SECURITY & SESSION TOKEN HELPERS
+        // ====================================================
+        const AUTH_STORAGE_KEY = "idcm_auth_session_v1";
+
+        function escapeHtml(str) {
+            return String(str ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function escapeHtmlAttr(str) {
+            return escapeHtml(str);
+        }
+
+        function getAuthSessionToken() {
+            try {
+                const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
+                if (!raw) return "";
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed.sessionToken !== "string" || parsed.sessionToken.length < 16) return "";
+                if (!parsed.expiresAt || Date.now() > Number(parsed.expiresAt)) return "";
+                return parsed.sessionToken;
+            } catch (e) {
+                return "";
+            }
+        }
+
+        function withSessionToken(payloadObj) {
+            const token = getAuthSessionToken();
+            return Object.assign({}, payloadObj, token ? { sessionToken: token } : {});
+        }
+
+        function appendSessionTokenToUrl(url) {
+            const token = getAuthSessionToken();
+            if (!token) return url;
+            const sep = url.indexOf("?") === -1 ? "?" : "&";
+            return url + sep + "sessionToken=" + encodeURIComponent(token);
+        }
+
+        function handleUnauthorizedResponse(resObj) {
+            if (resObj && resObj.code === "UNAUTHORIZED") {
+                try {
+                    localStorage.removeItem(AUTH_STORAGE_KEY);
+                    sessionStorage.removeItem(AUTH_STORAGE_KEY);
+                    if (typeof invalidateLocalSummaryCache === "function") invalidateLocalSummaryCache();
+                } catch (e) {}
+                const overlay = document.getElementById("authGateOverlay");
+                if (overlay) overlay.classList.remove("hidden");
+                if (typeof showAuthAlert === "function") {
+                    showAuthAlert("Sesi Anda telah berakhir atau tidak valid. Silakan Sign In kembali.", "error");
+                }
+                return true;
+            }
+            return false;
         }
 
         // ====================================================
@@ -60,8 +121,8 @@
                 return `
                     <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-200 dark:border-gray-600">
                         <div>
-                            <div class="text-xs font-bold text-gray-800 dark:text-gray-100">${p.name}</div>
-                            <div class="text-[11px] text-gray-500 dark:text-gray-400">${p.company} &bull; ${p.category}</div>
+                            <div class="text-xs font-bold text-gray-800 dark:text-gray-100">${escapeHtml(p.name)}</div>
+                            <div class="text-[11px] text-gray-500 dark:text-gray-400">${escapeHtml(p.company)} &bull; ${escapeHtml(p.category)}</div>
                         </div>
                         <div>
                             ${docs.length > 0 ? `
@@ -134,9 +195,10 @@
                         const resp = await fetch(APPS_SCRIPT_URL, {
                             method: 'POST',
                             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify({ action: "get_file_base64", fileId: item.doc.fileId, asPdf: false })
+                            body: JSON.stringify(withSessionToken({ action: "get_file_base64", fileId: item.doc.fileId, asPdf: false }))
                         });
                         const resData = await resp.json();
+                        if (handleUnauthorizedResponse(resData)) throw new Error(resData.message || "Unauthorized");
                         if (resData && resData.status === "success" && resData.base64) {
                             fileBase64 = resData.base64;
                         }
@@ -145,8 +207,12 @@
                     }
 
                     if (fileBase64) {
-                        const cleanFolder = item.prodName.replace(/[\\/:*?"<>|]/g, "_");
-                        const cleanFileName = item.doc.fileName.replace(/[\\/:*?"<>|]/g, "_");
+                        const sanitizeZipSegment = (val) => String(val || "unnamed")
+                            .replace(/[\\/:*?"<>|]+/g, "_")
+                            .replace(/^[.\s]+|[.\s]+$/g, "")
+                            .replace(/\.{2,}/g, "_") || "unnamed";
+                        const cleanFolder = sanitizeZipSegment(item.prodName);
+                        const cleanFileName = sanitizeZipSegment(item.doc.fileName);
                         zip.folder(cleanFolder).file(cleanFileName, fileBase64, { base64: true });
                     }
                 }
@@ -295,7 +361,7 @@
                                 <i class="fa-solid ${iconInfo.icon}"></i>
                             </div>
                             <div class="min-w-0">
-                                <div class="font-bold text-gray-800 dark:text-gray-200 truncate" title="${item.fileName}">${item.fileName}</div>
+                                <div class="font-bold text-gray-800 dark:text-gray-200 truncate" title="${escapeHtmlAttr(item.fileName)}">${escapeHtml(item.fileName)}</div>
                                 <div class="text-[11px] text-gray-500 dark:text-gray-400">${formatFileSize(item.size)}</div>
                             </div>
                         </div>
@@ -303,7 +369,7 @@
                             <div class="w-full sm:w-56 flex-1 sm:flex-initial">
                                 <select onchange="updateStagingProdName(${idx}, this.value)" class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg p-2 sm:p-1.5 text-xs outline-none min-h-[38px] sm:min-h-0">
                                     ${productNames.map(pn => `
-                                        <option value="${pn.replace(/"/g, '&quot;')}" ${pn === item.targetProdName ? 'selected' : ''}>${pn}</option>
+                                        <option value="${escapeHtmlAttr(pn)}" ${pn === item.targetProdName ? 'selected' : ''}>${escapeHtml(pn)}</option>
                                     `).join('')}
                                 </select>
                             </div>
@@ -373,10 +439,11 @@
                     const resp = await fetch(APPS_SCRIPT_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify(withSessionToken(payload))
                     });
 
                     const res = await resp.json();
+                    if (handleUnauthorizedResponse(res)) break;
                     if (res && res.status === "success") {
                         successCount++;
                         productDocuments.push({
@@ -458,10 +525,13 @@
                 const resp = await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(withSessionToken(payload))
                 });
 
                 const res = await resp.json();
+                if (handleUnauthorizedResponse(res)) {
+                    throw new Error(res.message || "Session expired");
+                }
                 if (res && res.status === "success") {
                     productDocuments.push({
                         productName: res.productName,
@@ -507,16 +577,21 @@
             if (!confirm(confirmMsg)) return;
 
             try {
-                await fetch(APPS_SCRIPT_URL, {
+                const delResp = await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
+                    body: JSON.stringify(withSessionToken({
                         action: "delete_document",
                         fileId: fileId,
                         productName: productName,
                         deleteEmptyParentFolder: true
-                    })
+                    }))
                 });
+                const delJson = await delResp.json().catch(() => null);
+                if (handleUnauthorizedResponse(delJson)) return;
+                if (delJson && delJson.status === "error") {
+                    throw new Error(delJson.message || "Failed to delete document.");
+                }
 
                 productDocuments = productDocuments.filter(d => d.fileId !== fileId);
 
@@ -605,13 +680,16 @@
                 const resp = await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
+                    body: JSON.stringify(withSessionToken({
                         action: "get_file_base64",
                         fileId: fileId,
                         asPdf: false
-                    })
+                    }))
                 });
                 const data = await resp.json();
+                if (handleUnauthorizedResponse(data)) {
+                    throw new Error(data.message || "Session expired.");
+                }
                 if (!data || data.status !== "success" || !data.base64) {
                     throw new Error((data && data.message) || "Failed to retrieve file from server.");
                 }
@@ -773,7 +851,7 @@
                         ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                         : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:bg-gray-300 dark:hover:bg-gray-700'}">
                         <i class="fa-solid fa-table-cells text-[10px]"></i>
-                        <span>${sName}</span>
+                        <span>${escapeHtml(sName)}</span>
                     </button>
                 `;
             }).join('');
@@ -878,14 +956,17 @@
                     const resp = await fetch(APPS_SCRIPT_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({
+                        body: JSON.stringify(withSessionToken({
                             action: "get_file_base64",
                             fileId: fileId,
                             asPdf: isOfficeDoc
-                        })
+                        }))
                     });
 
                     const data = await resp.json();
+                    if (handleUnauthorizedResponse(data)) {
+                        throw new Error(data.message || "Session expired.");
+                    }
                     if (!data || data.status !== "success" || !data.base64) {
                         throw new Error(data && data.message ? data.message : "File data was not received from server.");
                     }
@@ -995,7 +1076,7 @@
                 if (mimeType.startsWith("image/")) {
                     content.innerHTML = `
                         <div class="w-full h-full flex items-center justify-center p-2 sm:p-4 overflow-auto">
-                            <img src="${currentInlineDocBlobUrl}" alt="${fileName}" class="max-w-full max-h-full object-contain rounded-lg shadow-md border dark:border-gray-700">
+                            <img src="${currentInlineDocBlobUrl}" alt="${escapeHtmlAttr(fileName)}" class="max-w-full max-h-full object-contain rounded-lg shadow-md border dark:border-gray-700">
                         </div>
                     `;
                 } else if (mimeType === "application/pdf") {
@@ -1027,22 +1108,26 @@
         }
     </script>
     <!-- FontAwesome CDN -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- Pustaka SheetJS untuk Ekspor & Import Excel (dengan dukungan Wrap Text & Cell Sizing) -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" integrity="sha384-3B6NwesSXE7YJlcLI9RpRqGf2p/EgVH8BgoKTaUrmKNDkHPStTQ3EyoYjCGXaOTS" crossorigin="anonymous">
+    <!-- Pustaka SheetJS untuk Ekspor & Import Excel (v0.20.3 + SRI) -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
     <script>window.XLSX_CORE = window.XLSX;</script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js" integrity="sha384-OUW9euuUyxyHcAhTqbhI+Iyb8LMssXt/cpz0yXhs9UWG2/R/uaWdakx/4cfww7Vb" crossorigin="anonymous"></script>
     <!-- Pustaka JSZip untuk mengekstrak gambar tabel langsung dari dalam arsip .xlsx -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
     <!-- Client-side Word (.docx) & PowerPoint (.pptx) preview libraries (no Drive API / server conversion needed) -->
-    <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.js" integrity="sha384-NBCI9UVwHYRAleta8R2I1lmwylC3PJDGUu6OZI5KeIikMTTnvR3zOR8zl8jdQRHS" crossorigin="anonymous"></script>
     <!-- PptxViewJS is lazy-loaded on demand via loadPptxViewerLib() because it overwrites native globals (e.g. window.FileReader) -->
     <script>
         let pptxViewerLibPromise = null;
-        function loadScriptOnce(src) {
+        function loadScriptOnce(src, integrityHash) {
             return new Promise((resolve, reject) => {
                 const s = document.createElement("script");
                 s.src = src;
+                if (integrityHash) {
+                    s.integrity = integrityHash;
+                    s.crossOrigin = "anonymous";
+                }
                 s.onload = () => resolve();
                 s.onerror = () => reject(new Error("Failed to load script: " + src));
                 document.head.appendChild(s);
@@ -1060,10 +1145,10 @@
                 });
                 try {
                     if (!window.Chart) {
-                        await loadScriptOnce("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
+                        await loadScriptOnce("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js", "sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4");
                         snapshot.Chart = window.Chart;
                     }
-                    await loadScriptOnce("https://cdn.jsdelivr.net/npm/pptxviewjs@1.1.9/dist/PptxViewJS.min.js");
+                    await loadScriptOnce("https://cdn.jsdelivr.net/npm/pptxviewjs@1.1.9/dist/PptxViewJS.min.js", "sha384-bmEMthgLe+RjctA6cP56ldWv/0ZwdbYX3CNn/SeEv0XhFUk0K/NnMbhqTYVOpLtL");
                 } finally {
                     Object.keys(snapshot).forEach(name => {
                         try {
@@ -2554,7 +2639,7 @@
 
         function syncSheetTabSelectors() {
             const optionsHtml = SHEET_TABS
-                .map(tab => `<option value="${String(tab).replace(/"/g, '&quot;')}">${tab}</option>`)
+                .map(tab => `<option value="${escapeHtmlAttr(tab)}">${escapeHtml(tab)}</option>`)
                 .join('');
 
             ["uploadTargetSheet", "manual_category", "edit_category"].forEach(id => {
@@ -2817,13 +2902,14 @@
                     const resp = await fetch(APPS_SCRIPT_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({
+                        body: JSON.stringify(withSessionToken({
                             action: "get_file_base64",
                             fileId: fileId,
                             asPdf: false
-                        })
+                        }))
                     });
                     const data = await resp.json();
+                    if (handleUnauthorizedResponse(data)) return "";
                     if (data && data.status === "success" && data.base64) {
                         const mime = data.mimeType && data.mimeType.startsWith("image/") ? data.mimeType : "image/png";
                         const dataUrl = `data:${mime};base64,${data.base64}`;
@@ -2900,12 +2986,12 @@
             return lines.map(line => {
                 const bulletMatch = line.match(/^\s*-\s*(.+)$/);
                 if (bulletMatch) {
-                    return `<div class="flex items-start gap-1.5 my-0.5"><span class="select-none font-bold leading-snug">&bull;</span><span class="flex-1">${bulletMatch[1]}</span></div>`;
+                    return `<div class="flex items-start gap-1.5 my-0.5"><span class="select-none font-bold leading-snug">&bull;</span><span class="flex-1">${escapeHtml(bulletMatch[1])}</span></div>`;
                 }
                 if (line.trim() === "") {
                     return `<div class="h-2"></div>`;
                 }
-                return `<div>${line}</div>`;
+                return `<div>${escapeHtml(line)}</div>`;
             }).join("");
         }
 
@@ -3487,7 +3573,7 @@
                 <div class="relative custom-select">
                     <button type="button"
                         class="w-full md:w-auto min-w-[95px] max-w-[190px] border border-blue-200 dark:border-blue-800/70 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-blue-50/40 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-left flex justify-between items-center gap-1 hover:bg-blue-50 dark:hover:bg-gray-600 transition"
-                        onclick="toggleCustomFilterDropdown('${escapeHtmlAttr(colName).replace(/'/g, "\\'")}', event)">
+                        onclick="toggleCustomFilterDropdown(${escapeHtmlAttr(JSON.stringify(colName))}, event)">
                         <span id="customFilterBtnText_${idx}" class="truncate font-medium">${escapeHtmlAttr(colName)}</span>
                         <i class="fa-solid fa-chevron-down text-[10px] ml-1 text-gray-400 shrink-0"></i>
                     </button>
@@ -3644,7 +3730,7 @@
                             <label class="flex items-center justify-between gap-2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onclick="event.stopPropagation()">
                                 <span class="flex items-center gap-2 min-w-0">
                                     <input type="checkbox" ${isAdded ? 'checked' : ''}
-                                           onchange="toggleCustomFilterColumn('${escapeHtmlAttr(item.col).replace(/'/g, "\\'")}', this.checked, event)"
+                                           onchange="toggleCustomFilterColumn(${escapeHtmlAttr(JSON.stringify(item.col))}, this.checked, event)"
                                            class="w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer shrink-0">
                                     <span class="truncate text-gray-700 dark:text-gray-200 font-medium" title="${escapeHtmlAttr(item.col)}">${escapeHtmlAttr(item.col)}</span>
                                 </span>
@@ -4133,7 +4219,7 @@
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify(initPayload)
+                    body: JSON.stringify(withSessionToken(initPayload))
                 });
                 sheetHasHeaders[targetSheet] = true;
             } else {
@@ -4147,7 +4233,7 @@
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify(appendPayload)
+                    body: JSON.stringify(withSessionToken(appendPayload))
                 });
             }
         }
@@ -4218,10 +4304,11 @@
             }
 
             const loadId = currentSheetLoadId;
-            documentsLoadPromise = fetch(`${APPS_SCRIPT_URL}?action=get_all_documents&t=${Date.now()}`)
+            documentsLoadPromise = fetch(appendSessionTokenToUrl(`${APPS_SCRIPT_URL}?action=get_all_documents&t=${Date.now()}`))
                 .then(res => res.json())
                 .then(data => {
                     if (loadId !== currentSheetLoadId) return productDocuments;
+                    if (handleUnauthorizedResponse(data)) return productDocuments;
                     if (data && data.status === "success" && Array.isArray(data.documents)) {
                         productDocuments = data.documents.filter(d =>
                             d.productName !== "__TABLE_IMAGES__" && d.docType !== "__TABLE_IMAGE__"
@@ -4367,10 +4454,11 @@
                 return fullProductDataPromise;
             }
 
-            fullProductDataPromise = fetch(`${APPS_SCRIPT_URL}?action=get_all_product_data&mode=full&t=${Date.now()}`)
+            fullProductDataPromise = fetch(appendSessionTokenToUrl(`${APPS_SCRIPT_URL}?action=get_all_product_data&mode=full&t=${Date.now()}`))
                 .then(res => res.json())
                 .then(data => {
                     if (loadId !== currentSheetLoadId) return false;
+                    if (handleUnauthorizedResponse(data)) return false;
                     if (!data || data.status !== "success" || !Array.isArray(data.sheets)) {
                         throw new Error("Gagal memuat detail lengkap produk");
                     }
@@ -4537,154 +4625,16 @@
                 document.getElementById("deckGrid").classList.add("hidden");
             }
 
-            // Helper Fallback (/gviz/tq) jika Apps Script belum di-redeploy versi terbaru
-            const loadViaLegacyGviz = () => {
-                currentLoadUsedLegacyGviz = true;
-                setBackgroundSyncBannerVisible(false);
-                products = [];
-                dynamicColumns = [];
-                resetDynamicConfigListsToDefault();
-                sheetContinuationColumns = [];
-                sheetsProcessed = 0;
-                sheetsFailed = 0;
-                sheetHasHeaders = {};
-                sheetColumnsMap = {};
-                const loadConfiguredProductSheets = () => {
-                    syncSheetTabSelectors();
-                    SHEET_TABS.forEach((tabName, index) => {
-                        window[`prosesDataSheet${index}`] = function (jsonData) {
-                            if (loadId !== currentSheetLoadId) return;
-                            processSheetData(jsonData, tabName);
-                            checkAllSheetsLoaded();
-                        };
-
-                        const script = document.createElement('script');
-                        script.onerror = () => {
-                            if (loadId !== currentSheetLoadId) return;
-                            sheetsFailed++;
-                            checkAllSheetsLoaded();
-                        };
-                        script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${encodeURIComponent(tabName)}&headers=1&tqx=responseHandler:prosesDataSheet${index}&t=${Date.now()}`;
-                        document.body.appendChild(script);
-                    });
-                };
-
-                let configLoaded = false;
-                window.prosesDataConfig = function (jsonData) {
-                    if (configLoaded || loadId !== currentSheetLoadId) return;
-                    configLoaded = true;
-                    try {
-                        const legacyCfg = {
-                            tabs: [],
-                            sheetAliases: [],
-                            coreAliases: [],
-                            nonBenefitColumns: [],
-                            syariahNonBenefitColumns: [],
-                            dplkNonBenefitColumns: [],
-                            nonBenefitAliases: [],
-                            benefitAliases: [],
-                            dplkBenefits: [],
-                            dplkCharges: [],
-                            channelFilters: [],
-                            underwritingFilters: [],
-                            companyKeywords: [],
-                            categoryConfigs: {},
-                            driveFolderId: ""
-                        };
-                        if (jsonData && jsonData.table && jsonData.table.rows) {
-                            jsonData.table.rows.forEach(r => {
-                                if (!r || !r.c) return;
-                                const type = String((r.c[0] && r.c[0].v) || "").trim().toLowerCase();
-                                const val = String((r.c[1] && r.c[1].v) || "").trim();
-                                const extra = String((r.c[2] && r.c[2].v) || "").trim();
-                                const desc = String((r.c[3] && r.c[3].v) || "").trim();
-                                if (!type || !val) return;
-                                const aliases = extra.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
-
-                                if (type === "sheet" || type === "tab" || type === "kategori" || type === "category") {
-                                    const lowerVal = val.toLowerCase();
-                                    if (lowerVal !== "config" && lowerVal !== "documents" && lowerVal !== "users" && !legacyCfg.tabs.some(t => t.toLowerCase() === lowerVal)) {
-                                        legacyCfg.tabs.push(val);
-                                        legacyCfg.sheetAliases.push({ canonical: val, aliases });
-                                    }
-                                } else if (type === "core" || type === "identitas") {
-                                    legacyCfg.coreAliases.push({ canonical: val, aliases });
-                                } else if (type === "category provision" || type === "category provisions") {
-                                    if (!legacyCfg.categoryConfigs[val]) legacyCfg.categoryConfigs[val] = { generalProvisions: null, specialProvisions: [], productSections: [] };
-                                    legacyCfg.categoryConfigs[val].generalProvisions = aliases;
-                                } else if (type.indexOf("special provision") === 0) {
-                                    const spM = type.match(/^special\s+provisions?\s*\((.+)\)$/i);
-                                    const tgtCat = spM ? spM[1].trim() : "";
-                                    if (tgtCat) {
-                                        if (!legacyCfg.categoryConfigs[tgtCat]) legacyCfg.categoryConfigs[tgtCat] = { generalProvisions: null, specialProvisions: [], productSections: [] };
-                                        legacyCfg.categoryConfigs[tgtCat].specialProvisions.push({
-                                            name: val, aliases, allowImage: /\[image\]/i.test(desc), description: desc.replace(/\[image\]/gi, "").trim()
-                                        });
-                                    }
-                                    legacyCfg.nonBenefitColumns.push(val);
-                                    legacyCfg.nonBenefitAliases.push({ canonical: val, aliases });
-                                } else if (type.indexOf("product section") === 0) {
-                                    const secM = type.match(/^product\s+sections?\s*\((.+)\)$/i);
-                                    const tgtCat = secM ? secM[1].trim() : "";
-                                    if (tgtCat) {
-                                        if (!legacyCfg.categoryConfigs[tgtCat]) legacyCfg.categoryConfigs[tgtCat] = { generalProvisions: null, specialProvisions: [], productSections: [] };
-                                        const pipeIdx = extra.indexOf("|");
-                                        const modePart = pipeIdx !== -1 ? extra.substring(0, pipeIdx) : extra;
-                                        const itemsPart = pipeIdx !== -1 ? extra.substring(pipeIdx + 1) : "";
-                                        const secMode = /checklist/i.test(modePart) ? "checklist" : "standard";
-                                        const secItems = itemsPart ? itemsPart.split(/[,;\n]/).map(s => s.trim()).filter(Boolean) : [];
-                                        legacyCfg.categoryConfigs[tgtCat].productSections.push({ title: val, mode: secMode, items: secItems, description: desc });
-                                    }
-                                } else if (type === "non-benefit" || type === "non-benefit (syariah)" || type === "non-benefit (dplk)") {
-                                    legacyCfg.nonBenefitColumns.push(val);
-                                    if (type === "non-benefit (syariah)") legacyCfg.syariahNonBenefitColumns.push(val);
-                                    if (type === "non-benefit (dplk)") legacyCfg.dplkNonBenefitColumns.push(val);
-                                    legacyCfg.nonBenefitAliases.push({ canonical: val, aliases });
-                                } else if (type === "benefit") {
-                                    legacyCfg.benefitAliases.push({ canonical: val, aliases });
-                                } else if (type === "benefit (dplk)" || type === "dplk benefit") {
-                                    legacyCfg.dplkBenefits.push({ canonical: val, aliases });
-                                } else if (type === "biaya (dplk)" || type === "dplk charge" || type === "charge (dplk)") {
-                                    legacyCfg.dplkCharges.push({ canonical: val, aliases });
-                                } else if (type === "filter channel" || type === "channel") {
-                                    legacyCfg.channelFilters.push({ canonical: val, aliases });
-                                } else if (type === "filter underwriting" || type === "underwriting") {
-                                    legacyCfg.underwritingFilters.push({ canonical: val, aliases });
-                                } else if (type === "company keyword" || type === "company") {
-                                    legacyCfg.companyKeywords.push({ canonical: val, aliases });
-                                } else if (type === "setting" && val.toLowerCase() === "drive folder id" && extra) {
-                                    legacyCfg.driveFolderId = extra;
-                                }
-                            });
-                        }
-                        applyDynamicConfigFromBackend(legacyCfg);
-                    } catch (e) {
-                        console.warn("Sheet Config belum dapat diproses:", e);
-                        SHEET_TABS = [...DEFAULT_SHEET_TABS];
-                    }
-                    loadConfiguredProductSheets();
-                };
-
-                const cfgScript = document.createElement('script');
-                cfgScript.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=Config&headers=1&tqx=responseHandler:prosesDataConfig&t=${Date.now()}`;
-                cfgScript.onerror = () => {
-                    if (configLoaded || loadId !== currentSheetLoadId) return;
-                    configLoaded = true;
-                    SHEET_TABS = [...DEFAULT_SHEET_TABS];
-                    loadConfiguredProductSheets();
-                };
-                document.body.appendChild(cfgScript);
-            };
-
             // Muat Payload Ringkas (mode=summary) terlebih dahulu agar deck kartu tampil instan,
             // lalu muat detail lengkap & daftar dokumen Drive di background / saat dibutuhkan.
             const nocacheParam = forceRefresh ? "&nocache=1" : "";
-            fetch(`${APPS_SCRIPT_URL}?action=get_all_product_data&mode=summary${nocacheParam}&t=${Date.now()}`)
+            fetch(appendSessionTokenToUrl(`${APPS_SCRIPT_URL}?action=get_all_product_data&mode=summary${nocacheParam}&t=${Date.now()}`))
                 .then(res => res.json())
                 .then(data => {
                     if (loadId !== currentSheetLoadId) return;
+                    if (handleUnauthorizedResponse(data)) return;
                     if (!data || data.status !== "success" || !Array.isArray(data.sheets)) {
-                        throw new Error("Endpoint get_all_product_data belum aktif di Apps Script");
+                        throw new Error((data && data.message) || "Endpoint get_all_product_data belum aktif di Apps Script");
                     }
 
                     writeLocalSummaryCache(data);
@@ -4693,28 +4643,28 @@
                 .catch(err => {
                     if (loadId !== currentSheetLoadId) return;
                     setBackgroundSyncBannerVisible(false);
+                    const iconEl = document.getElementById("refreshIcon");
+                    if (iconEl) iconEl.classList.remove("fa-spin");
                     if (renderedFromCache) {
-                        const iconEl = document.getElementById("refreshIcon");
-                        if (iconEl) iconEl.classList.remove("fa-spin");
                         console.warn("Sinkronisasi background gagal (mempertahankan data cache):", err);
                         return;
                     }
-                    console.warn("Memakai fallback /gviz/tq karena get_all_product_data belum merespons:", err);
-                    loadViaLegacyGviz();
+                    const loadingEl = document.getElementById("loadingIndicator");
+                    if (loadingEl) {
+                        loadingEl.innerHTML = `<p class="text-red-500 font-semibold"><i class="fa-solid fa-triangle-exclamation me-1"></i> ${escapeHtml(err && err.message ? err.message : "Failed to load data from server.")}</p>`;
+                    }
                 });
         }
 
         // ====================================================
         // SISTEM AUTENTIKASI (SIGN IN, SIGN UP, & FORGOT PASSWORD OTP)
         // ====================================================
-        const AUTH_STORAGE_KEY = "idcm_auth_session_v1";
-
         function getActiveAuthSession() {
             try {
                 const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
                 if (!raw) return null;
                 const parsed = JSON.parse(raw);
-                if (!parsed || !parsed.username || !parsed.expiresAt) return null;
+                if (!parsed || !parsed.username || !parsed.expiresAt || typeof parsed.sessionToken !== "string" || parsed.sessionToken.length < 16) return null;
                 if (Date.now() > Number(parsed.expiresAt)) {
                     localStorage.removeItem(AUTH_STORAGE_KEY);
                     sessionStorage.removeItem(AUTH_STORAGE_KEY);
@@ -4726,13 +4676,14 @@
             }
         }
 
-        function saveAuthSession(userObj, rememberMe = true) {
+        function saveAuthSession(userObj, rememberMe = true, sessionToken = "", serverExpiresAt = null) {
             const durationMs = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
             const sessionData = {
                 username: userObj.username,
                 email: userObj.email || "",
+                sessionToken: String(sessionToken || ""),
                 loginAt: Date.now(),
-                expiresAt: Date.now() + durationMs
+                expiresAt: serverExpiresAt ? Number(serverExpiresAt) : (Date.now() + durationMs)
             };
             if (rememberMe) {
                 localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
@@ -4752,15 +4703,16 @@
                 box.innerHTML = "";
                 return;
             }
+            const safeMsg = escapeHtml(message);
             if (type === "success") {
                 box.className = "mx-5 mt-4 p-3 rounded-xl text-xs font-medium border bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 border-emerald-200 dark:border-emerald-800 flex items-start gap-2";
-                box.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 dark:text-emerald-400 mt-0.5"></i><span>${message}</span>`;
+                box.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 dark:text-emerald-400 mt-0.5"></i><span>${safeMsg}</span>`;
             } else if (type === "info") {
                 box.className = "mx-5 mt-4 p-3 rounded-xl text-xs font-medium border bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-200 border-blue-200 dark:border-blue-800 flex items-start gap-2";
-                box.innerHTML = `<i class="fa-solid fa-circle-info text-blue-600 dark:text-blue-400 mt-0.5"></i><span>${message}</span>`;
+                box.innerHTML = `<i class="fa-solid fa-circle-info text-blue-600 dark:text-blue-400 mt-0.5"></i><span>${safeMsg}</span>`;
             } else {
                 box.className = "mx-5 mt-4 p-3 rounded-xl text-xs font-medium border bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-200 border-red-200 dark:border-red-800 flex items-start gap-2";
-                box.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-600 dark:text-red-400 mt-0.5"></i><span>${message}</span>`;
+                box.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-600 dark:text-red-400 mt-0.5"></i><span>${safeMsg}</span>`;
             }
         }
 
@@ -4831,8 +4783,33 @@
 
         function handleLogout() {
             if (!confirm("Are you sure you want to Sign Out of this session?")) return;
+            const currentToken = getAuthSessionToken();
+            if (currentToken) {
+                try {
+                    fetch(APPS_SCRIPT_URL, {
+                        method: "POST",
+                        mode: "no-cors",
+                        headers: { "Content-Type": "text/plain;charset=utf-8" },
+                        body: JSON.stringify({ action: "auth_logout", sessionToken: currentToken })
+                    });
+                } catch (e) {}
+            }
             localStorage.removeItem(AUTH_STORAGE_KEY);
             sessionStorage.removeItem(AUTH_STORAGE_KEY);
+            invalidateLocalSummaryCache();
+            products = [];
+            productDocuments = [];
+            productDriveFolders = [];
+            selectedProductIds = [];
+            currentlyVisibleProducts = [];
+            currentActiveProduct = null;
+            isFullProductDataLoaded = false;
+            isDocumentsLoaded = false;
+
+            const gridEl = document.getElementById("deckGrid");
+            if (gridEl) gridEl.innerHTML = "";
+            const detailBodyEl = document.getElementById("detailBody");
+            if (detailBodyEl) detailBodyEl.innerHTML = "";
 
             const navContainer = document.getElementById("navUserContainer");
             if (navContainer) {
@@ -4868,15 +4845,16 @@
                     body: JSON.stringify({
                         action: "auth_signin",
                         identifier,
-                        password
+                        password,
+                        rememberMe
                     })
                 });
                 const res = await resp.json();
-                if (!res || res.status !== "success" || !res.user) {
+                if (!res || res.status !== "success" || !res.user || !res.sessionToken) {
                     throw new Error((res && res.message) || "Sign In failed. Please check your Username/Email and Password.");
                 }
 
-                const session = saveAuthSession(res.user, rememberMe);
+                const session = saveAuthSession(res.user, rememberMe, res.sessionToken, res.expiresAt);
                 unlockAppWithSession(session);
             } catch (err) {
                 showAuthAlert(err.message || "Failed to connect to authentication server.", "error");
@@ -4919,11 +4897,11 @@
                     })
                 });
                 const res = await resp.json();
-                if (!res || res.status !== "success" || !res.user) {
+                if (!res || res.status !== "success" || !res.user || !res.sessionToken) {
                     throw new Error((res && res.message) || "Failed to register new account.");
                 }
 
-                const session = saveAuthSession(res.user, true);
+                const session = saveAuthSession(res.user, true, res.sessionToken, res.expiresAt);
                 unlockAppWithSession(session);
             } catch (err) {
                 showAuthAlert(err.message || "Failed to connect to registration server.", "error");
@@ -5236,11 +5214,12 @@
 
         function getCategoryBadge(category) {
             const c = String(category || "").trim().toLowerCase();
-            if (c === "conventional" || c === "konven") return `<span class="bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
-            if (c === "sharia" || c === "syariah") return `<span class="bg-green-100 text-green-800 dark:bg-green-900/60 dark:text-green-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
-            if (c === "health & surgical" || c === "hs") return `<span class="bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
-            if (c === "dplk") return `<span class="bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
-            return `<span class="bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${category}</span>`;
+            const safeCat = escapeHtml(category);
+            if (c === "conventional" || c === "konven") return `<span class="bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
+            if (c === "sharia" || c === "syariah") return `<span class="bg-green-100 text-green-800 dark:bg-green-900/60 dark:text-green-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
+            if (c === "health & surgical" || c === "hs") return `<span class="bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
+            if (c === "dplk") return `<span class="bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
+            return `<span class="bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
         }
 
         function renderDeck(data) {
@@ -5268,32 +5247,32 @@
                 });
                 const previewCardHtml = checklistBenefits.length > 0
                     ? `<div class="text-xs bg-gray-50 dark:bg-gray-700/60 p-2.5 rounded-lg text-gray-600 dark:text-gray-300 mb-3 line-clamp-3">
-                            <strong class="text-gray-800 dark:text-gray-200 block"><i class="fa-solid fa-list-check text-emerald-600 dark:text-emerald-400 me-1"></i>Pension Benefits (${checklistBenefits.length}):</strong> ${checklistBenefits.join(", ")}
+                            <strong class="text-gray-800 dark:text-gray-200 block"><i class="fa-solid fa-list-check text-emerald-600 dark:text-emerald-400 me-1"></i>Pension Benefits (${checklistBenefits.length}):</strong> ${checklistBenefits.map(escapeHtml).join(", ")}
                        </div>`
                     : (previewBenefitKey && !isEmptyVal(previewVal)
                         ? `<div class="text-xs bg-gray-50 dark:bg-gray-700/60 p-2.5 rounded-lg text-gray-600 dark:text-gray-300 mb-3 line-clamp-3">
-                            <strong class="text-gray-800 dark:text-gray-200 block">${previewBenefitKey}:</strong> ${formatListText(previewVal)}
+                            <strong class="text-gray-800 dark:text-gray-200 block">${escapeHtml(previewBenefitKey)}:</strong> ${formatListText(previewVal)}
                            </div>`
                         : '');
 
                 card.innerHTML = `
                     <div class="flex-1 cursor-pointer group/cardbody" onclick="openDetailModal(${p.id})">
                         <div class="flex justify-between items-start mb-2">
-                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600">${p.company}</span>
+                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600">${escapeHtml(p.company)}</span>
                             <div class="flex flex-col items-end gap-1">
                                 ${getCategoryBadge(p.category)}
-                                <span class="text-xs text-gray-500 dark:text-gray-400 font-medium">${p.currency}</span>
+                                <span class="text-xs text-gray-500 dark:text-gray-400 font-medium">${escapeHtml(p.currency)}</span>
                             </div>
                         </div>
-                        <h3 class="font-bold text-gray-800 dark:text-gray-100 group-hover/cardbody:text-blue-600 dark:group-hover/cardbody:text-blue-400 transition-colors text-base mb-1">${p.name}</h3>
+                        <h3 class="font-bold text-gray-800 dark:text-gray-100 group-hover/cardbody:text-blue-600 dark:group-hover/cardbody:text-blue-400 transition-colors text-base mb-1">${escapeHtml(p.name)}</h3>
                         <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400 mb-3">
-                            <span><i class="fa-solid ${getChannelIcon(p.channel)} me-1"></i>${p.channel}</span>
+                            <span><i class="fa-solid ${getChannelIcon(p.channel)} me-1"></i>${escapeHtml(p.channel)}</span>
                             <span>&bull;</span>
-                            <span class="italic">${p.productType}</span>
+                            <span class="italic">${escapeHtml(p.productType)}</span>
                             ${p.launchDate && p.launchDate !== '-' ? `
                                 <span>&bull;</span>
                                 <span class="text-[11px] text-blue-600 dark:text-blue-400 font-medium" title="Launch Date">
-                                    <i class="fa-regular fa-calendar-check me-1"></i>${formatDisplayDate(p.launchDate)}
+                                    <i class="fa-regular fa-calendar-check me-1"></i>${escapeHtml(formatDisplayDate(p.launchDate))}
                                 </span>
                             ` : ''}
                             ${(() => {
@@ -5570,15 +5549,6 @@
             adjustCompareTableZoom(delta);
         }
 
-        function escapeHtml(str) {
-            return String(str ?? "")
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#39;");
-        }
-
         function closeCategoryMismatchModal() {
             const modal = document.getElementById("categoryMismatchModal");
             if (modal) modal.classList.add("hidden");
@@ -5795,7 +5765,7 @@
                             <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Company Name</th>
                             ${currentComparisonProducts.map(p => `
                                 <th scope="col" class="p-2 sm:p-3 font-semibold text-blue-700 dark:text-blue-300 border-l dark:border-gray-600 bg-gray-100 dark:bg-gray-700 break-words">
-                                    ${p.company}
+                                    ${escapeHtml(p.company)}
                                 </th>
                             `).join('')}
                         </tr>
@@ -5803,7 +5773,7 @@
                             <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Product Name</th>
                             ${currentComparisonProducts.map(p => `
                                 <th scope="col" class="p-2 sm:p-3 font-bold text-blue-900 dark:text-blue-100 border-l dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-sm sm:text-base break-words">
-                                    ${p.name}
+                                    ${escapeHtml(p.name)}
                                 </th>
                             `).join('')}
                         </tr>
@@ -5823,7 +5793,7 @@
                     return `
                                 <tr class="${secBg}">
                                     <td class="p-2 sm:p-3 font-extrabold ${secText} uppercase tracking-wider text-[11px] sm:text-xs break-words">
-                                        ${feat.label}
+                                        ${escapeHtml(feat.label)}
                                     </td>
                                     ${currentComparisonProducts.map(() => `<td class="p-2 sm:p-3 border-l dark:border-gray-800 ${secCellBg}"></td>`).join('')}
                                 </tr>
@@ -5843,7 +5813,7 @@
 
                 return `
                                 <tr>
-                                    <td class="p-2 sm:p-3 align-middle break-words ${rowBgClass}">${feat.label}</td>
+                                    <td class="p-2 sm:p-3 align-middle break-words ${rowBgClass}">${escapeHtml(feat.label)}</td>
                                     ${currentComparisonProducts.map(p => {
                     let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
                     const renderedVal = formatListText(val);
@@ -7222,9 +7192,12 @@
                 const resp = await fetch(APPS_SCRIPT_URL, {
                     method: "POST",
                     headers: { "Content-Type": "text/plain;charset=utf-8" },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(withSessionToken(payload))
                 });
                 const res = await resp.json();
+                if (handleUnauthorizedResponse(res)) {
+                    throw new Error(res.message || "Session expired.");
+                }
                 if (!res || res.status !== "success") {
                     throw new Error((res && res.message) || "Failed to save category configuration.");
                 }
@@ -7842,7 +7815,7 @@
                             <h5 class="font-bold text-indigo-800 dark:text-indigo-300 text-sm flex items-center gap-1.5">
                                 <i class="fa-solid fa-layer-group text-indigo-600 dark:text-indigo-400"></i> ${escapeHtmlAttr(sec.title)}
                             </h5>
-                            <button type="button" onclick="addNewSectionItemRow('${customSecContainerId}', '${customSecNoticeId}', '${escapeHtmlAttr(sec.title)}', '${customSecDatalistId}')" class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm shrink-0">
+                            <button type="button" onclick="addNewSectionItemRow('${customSecContainerId}', '${customSecNoticeId}', ${escapeHtmlAttr(JSON.stringify(sec.title))}, '${customSecDatalistId}')" class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm shrink-0">
                                 <i class="fa-solid fa-plus"></i> Add ${escapeHtmlAttr(sec.title)}
                             </button>
                         </div>
@@ -7873,7 +7846,7 @@
                             }).join('')}
                         </div>
                         <div id="${customSecContainerId}" class="space-y-3 pt-1"></div>
-                        <button type="button" onclick="addNewSectionItemRow('${customSecContainerId}', '${customSecNoticeId}', '${escapeHtmlAttr(sec.title)}', '${customSecDatalistId}')" class="w-full py-2 border-2 border-dashed border-indigo-300 dark:border-indigo-700 hover:border-indigo-500 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 mt-2">
+                        <button type="button" onclick="addNewSectionItemRow('${customSecContainerId}', '${customSecNoticeId}', ${escapeHtmlAttr(JSON.stringify(sec.title))}, '${customSecDatalistId}')" class="w-full py-2 border-2 border-dashed border-indigo-300 dark:border-indigo-700 hover:border-indigo-500 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 mt-2">
                             <i class="fa-solid fa-circle-plus"></i> Add ${escapeHtmlAttr(sec.title)}
                         </button>
                     </div>
@@ -7995,12 +7968,12 @@
             };
 
             let basicDetailsHTML = `
-                <div class="detail-row"><span class="detail-label">Company:</span> ${p.company}</div>
-                <div class="detail-row"><span class="detail-label">Launch Date:</span> ${formatDisplayDate(p.launchDate)}</div>
-                <div class="detail-row"><span class="detail-label">Category System:</span> ${p.category}</div>
-                <div class="detail-row"><span class="detail-label">Channel:</span> ${p.channel}</div>
-                <div class="detail-row"><span class="detail-label">Product Type:</span> ${p.productType}</div>
-                <div class="detail-row"><span class="detail-label">Currency:</span> ${p.currency}</div>
+                <div class="detail-row"><span class="detail-label">Company:</span> ${escapeHtml(p.company)}</div>
+                <div class="detail-row"><span class="detail-label">Launch Date:</span> ${escapeHtml(formatDisplayDate(p.launchDate))}</div>
+                <div class="detail-row"><span class="detail-label">Category System:</span> ${escapeHtml(p.category)}</div>
+                <div class="detail-row"><span class="detail-label">Channel:</span> ${escapeHtml(p.channel)}</div>
+                <div class="detail-row"><span class="detail-label">Product Type:</span> ${escapeHtml(p.productType)}</div>
+                <div class="detail-row"><span class="detail-label">Currency:</span> ${escapeHtml(p.currency)}</div>
             `;
 
             const catCfg = getCategorySchemaConfig(p.category);
@@ -8214,7 +8187,8 @@
         }
 
         function renderDocumentsSectionView(p, pDocs) {
-            const safeName = p.name.replace(/'/g, "\\'");
+            const safeJsStr = (s) => escapeHtmlAttr(String(s || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'"));
+            const safeName = safeJsStr(p.name);
             return `
                 <div class="pt-4 mt-4 border-t border-gray-200 dark:border-gray-700" id="detailDocumentsSection">
                     <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
@@ -8245,7 +8219,10 @@
                 const fileInfo = getDocFileIcon(doc.fileName);
                 const metaParts = [];
                 if (doc.fileSize) metaParts.push(`<span>${formatFileSize(doc.fileSize)}</span>`);
-                if (doc.uploadDate) metaParts.push(`<span>${doc.uploadDate.split(' ')[0]}</span>`);
+                if (doc.uploadDate) metaParts.push(`<span>${escapeHtml(doc.uploadDate.split(' ')[0])}</span>`);
+                const safeFileId = safeJsStr(doc.fileId);
+                const safeFileNameJs = safeJsStr(doc.fileName);
+                const safeDownloadUrlJs = safeJsStr(doc.downloadUrl || "");
                 return `
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-200 dark:border-gray-600 hover:border-blue-400 transition">
                                         <div class="flex items-center gap-2.5 min-w-0">
@@ -8253,7 +8230,7 @@
                                                 <i class="fa-solid ${fileInfo.icon} text-sm" aria-hidden="true"></i>
                                             </div>
                                             <div class="min-w-0 flex-1">
-                                                <div class="text-xs font-bold text-gray-800 dark:text-gray-200 truncate" title="${doc.fileName}">${doc.fileName}</div>
+                                                <div class="text-xs font-bold text-gray-800 dark:text-gray-200 truncate" title="${escapeHtmlAttr(doc.fileName)}">${escapeHtml(doc.fileName)}</div>
                                                 ${metaParts.length > 0 ? `
                                                 <div class="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
                                                     ${metaParts.join('<span>&bull;</span>')}
@@ -8261,13 +8238,13 @@
                                             </div>
                                         </div>
                                         <div class="flex items-center justify-end gap-1.5 shrink-0">
-                                            <button type="button" onclick="previewDocumentInline('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', '', '${doc.downloadUrl || ''}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition flex items-center gap-1" title="Preview Document Inline">
+                                            <button type="button" onclick="previewDocumentInline('${safeFileId}', '${safeFileNameJs}', '', '${safeDownloadUrlJs}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition flex items-center gap-1" title="Preview Document Inline">
                                                 <i class="fa-solid fa-eye text-[10px]" aria-hidden="true"></i> View
                                             </button>
-                                            <button type="button" onclick="downloadDocumentDirect('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', this, '${doc.downloadUrl || ''}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 disabled:opacity-60 transition flex items-center gap-1" title="Download Original File Directly">
+                                            <button type="button" onclick="downloadDocumentDirect('${safeFileId}', '${safeFileNameJs}', this, '${safeDownloadUrlJs}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 disabled:opacity-60 transition flex items-center gap-1" title="Download Original File Directly">
                                                 <i class="fa-solid fa-download text-[10px]" aria-hidden="true"></i> <span>Download</span>
                                             </button>
-                                            <button type="button" onclick="deleteSingleProductDoc('${doc.fileId}', '${safeName}')" aria-label="Delete Document" class="modal-touch-btn w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Delete Document">
+                                            <button type="button" onclick="deleteSingleProductDoc('${safeFileId}', '${safeName}')" aria-label="Delete Document" class="modal-touch-btn w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Delete Document">
                                                 <i class="fa-solid fa-trash-can text-xs" aria-hidden="true"></i>
                                             </button>
                                         </div>
@@ -8706,16 +8683,19 @@
             const resp = await fetch(APPS_SCRIPT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
+                body: JSON.stringify(withSessionToken({
                     action: "upload_document",
                     productName: "__TABLE_IMAGES__",
                     docType: "__TABLE_IMAGE__",
                     fileName: fileName,
                     mimeType: mimeType,
                     base64Data: base64Data
-                })
+                }))
             });
             const res = await resp.json();
+            if (handleUnauthorizedResponse(res)) {
+                throw new Error(res.message || "Session expired.");
+            }
             if (res && res.status === "success" && res.fileId) {
                 driveImageCache[res.fileId] = fullDataUrl;
                 return res.fileId;
@@ -9512,7 +9492,7 @@
                         method: 'POST',
                         mode: 'no-cors',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify(withSessionToken(payload))
                     });
                 } else {
                     await appendToSheetWithHeaderCheck(newCategory, masterSchema, [rowData]);
@@ -9529,7 +9509,7 @@
                         method: 'POST',
                         mode: 'no-cors',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(deletePayload)
+                        body: JSON.stringify(withSessionToken(deletePayload))
                     });
                 }
 
@@ -9539,7 +9519,7 @@
                             method: 'POST',
                             mode: 'no-cors',
                             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify({ action: "save_benefit_aliases", mappings: customNonBenefitsToRegister })
+                            body: JSON.stringify(withSessionToken({ action: "save_benefit_aliases", mappings: customNonBenefitsToRegister }))
                         });
                     } catch (e) {}
                 }
@@ -9950,7 +9930,7 @@
             const existingProd = products.find(p => p.name.toLowerCase().trim() === rawName.toLowerCase());
             if (existingProd) {
                 feedbackEl.className = "block mt-1.5 text-[11px] px-2.5 py-1 rounded-md border bg-red-50 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800 font-medium";
-                feedbackEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation me-1"></i> Product <strong>"${existingProd.name}"</strong> is already registered under category <strong>${existingProd.category}</strong>!`;
+                feedbackEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation me-1"></i> Product <strong>"${escapeHtml(existingProd.name)}"</strong> is already registered under category <strong>${escapeHtml(existingProd.category)}</strong>!`;
                 return false;
             } else {
                 feedbackEl.className = "block mt-1.5 text-[11px] px-2.5 py-1 rounded-md border bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800 font-medium";
@@ -10050,7 +10030,7 @@
                         method: 'POST',
                         mode: 'no-cors',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify(withSessionToken(payload))
                     });
                 }
 
@@ -10060,7 +10040,7 @@
                             method: 'POST',
                             mode: 'no-cors',
                             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify({ action: "save_benefit_aliases", mappings: customNonBenefitsToRegister })
+                            body: JSON.stringify(withSessionToken({ action: "save_benefit_aliases", mappings: customNonBenefitsToRegister }))
                         });
                     } catch (e) {}
                 }
@@ -10286,10 +10266,10 @@
                             return fetch(APPS_SCRIPT_URL, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                                body: JSON.stringify({
+                                body: JSON.stringify(withSessionToken({
                                     action: "delete_document",
                                     fileId: fileId
-                                })
+                                }))
                             });
                         })
                     );
@@ -10303,11 +10283,11 @@
                             fetch(APPS_SCRIPT_URL, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                                body: JSON.stringify({
+                                body: JSON.stringify(withSessionToken({
                                     action: "delete_document",
                                     fileId: fileId,
                                     deleteEmptyParentFolder: true
-                                })
+                                }))
                             })
                         )
                     );
@@ -10332,7 +10312,7 @@
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(withSessionToken(payload))
                 });
 
                 selectedProductIds = selectedProductIds.filter(id => !pendingDeleteProductIds.includes(id));
@@ -10489,8 +10469,23 @@
             const sheetImagesMap = {};
             if (typeof JSZip === "undefined") return sheetImagesMap;
 
+            const MAX_ZIP_ENTRIES = 2000;
+            const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024; // 100 MB batas total dekompresi aman
+
             try {
                 const zip = await JSZip.loadAsync(arrayBuffer);
+                const entries = Object.values(zip.files || {});
+                if (entries.length > MAX_ZIP_ENTRIES) {
+                    throw new Error(`Archive contains too many entries (${entries.length} > ${MAX_ZIP_ENTRIES}).`);
+                }
+                let totalUncompressed = 0;
+                for (const entry of entries) {
+                    const uSize = Number(entry && entry._data && entry._data.uncompressedSize) || 0;
+                    totalUncompressed += Math.max(0, uSize);
+                    if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
+                        throw new Error("Archive uncompressed size exceeds the 100 MB safety limit.");
+                    }
+                }
                 const parser = new DOMParser();
 
                 const wbXmlFile = zip.file("xl/workbook.xml");
@@ -10717,10 +10712,6 @@
                 sel.innerHTML = "";
                 sel.classList.add("hidden");
             }
-        }
-
-        function escapeHtmlAttr(str) {
-            return String(str).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         }
 
         // Hitung jumlah produk per sheet tanpa mengubah dynamicColumns atau NON_BENEFIT_COLUMNS secara permanen
@@ -12772,7 +12763,7 @@
                             method: 'POST',
                             mode: 'no-cors',
                             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify(deletePayload)
+                            body: JSON.stringify(withSessionToken(deletePayload))
                         });
                     }
                 }
@@ -12811,7 +12802,7 @@
                             method: 'POST',
                             mode: 'no-cors',
                             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify({ action: "save_benefit_aliases", mappings: aliasMappings })
+                            body: JSON.stringify(withSessionToken({ action: "save_benefit_aliases", mappings: aliasMappings }))
                         });
                         savedAliasCount = aliasMappings.length;
                         aliasMappings.forEach(m => {
@@ -12832,7 +12823,7 @@
                 const totalUploaded = uploadSummary.reduce((sum, x) => sum + x.count, 0);
                 previewArea.innerHTML = `
                     <p class="font-bold text-green-700 dark:text-green-400 text-sm"><i class="fa-solid fa-circle-check"></i> Successfully Uploaded!</p>
-                    <p class="text-xs text-gray-600 dark:text-gray-300">${totalUploaded} product(s) successfully saved to: ${uploadSummary.map(x => `tab <strong>${x.tabName}</strong> (${x.count})`).join(", ")}.</p>
+                    <p class="text-xs text-gray-600 dark:text-gray-300">${totalUploaded} product(s) successfully saved to: ${uploadSummary.map(x => `tab <strong>${escapeHtml(x.tabName)}</strong> (${x.count})`).join(", ")}.</p>
                     ${savedAliasCount > 0 ? `<p class="text-xs text-emerald-700 dark:text-emerald-400"><i class="fa-solid fa-tags me-1"></i>${savedAliasCount} mapping(s) / provision(s) saved to Config.</p>` : ""}
                 `;
                 resetBenefitReviewState();
