@@ -299,9 +299,9 @@
                                 <div class="text-[11px] text-gray-500 dark:text-gray-400">${formatFileSize(item.size)}</div>
                             </div>
                         </div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <div class="w-56">
-                                <select onchange="updateStagingProdName(${idx}, this.value)" class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg p-1.5 text-xs outline-none">
+                        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                            <div class="w-full sm:w-56 flex-1 sm:flex-initial">
+                                <select onchange="updateStagingProdName(${idx}, this.value)" class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg p-2 sm:p-1.5 text-xs outline-none min-h-[38px] sm:min-h-0">
                                     ${productNames.map(pn => `
                                         <option value="${pn.replace(/"/g, '&quot;')}" ${pn === item.targetProdName ? 'selected' : ''}>${pn}</option>
                                     `).join('')}
@@ -780,17 +780,17 @@
 
             content.innerHTML = `
                 <div class="w-full h-full flex flex-col bg-white dark:bg-gray-900 rounded-xl border border-gray-300 dark:border-gray-700 overflow-hidden shadow-inner">
-                    <div class="px-3 pt-2 bg-gray-100 dark:bg-slate-900 border-b border-gray-300 dark:border-gray-700 flex items-center justify-between gap-2 shrink-0">
-                        <div class="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                    <div class="px-2.5 sm:px-3 pt-2 bg-gray-100 dark:bg-slate-900 border-b border-gray-300 dark:border-gray-700 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                        <div class="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full">
                             ${tabsHtml}
                         </div>
-                        <div class="flex items-center gap-1 pb-1.5 shrink-0">
-                            <button type="button" onclick="adjustInlineExcelZoom(-0.1)" class="px-2 py-0.5 text-xs font-bold rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50" title="Zoom Out Table">-</button>
+                        <div class="flex items-center gap-1 pb-1.5 shrink-0 ms-auto">
+                            <button type="button" onclick="adjustInlineExcelZoom(-0.1)" aria-label="Zoom Out Table" class="px-2.5 py-1 sm:px-2 sm:py-0.5 min-w-[34px] min-h-[34px] sm:min-w-0 sm:min-h-0 text-xs font-bold rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50" title="Zoom Out Table">-</button>
                             <span id="inlineExcelZoomBadge" class="text-[11px] font-bold text-gray-700 dark:text-gray-300 px-1.5">${Math.round(currentInlineExcelZoom * 100)}%</span>
-                            <button type="button" onclick="adjustInlineExcelZoom(0.1)" class="px-2 py-0.5 text-xs font-bold rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50" title="Zoom In Table">+</button>
+                            <button type="button" onclick="adjustInlineExcelZoom(0.1)" aria-label="Zoom In Table" class="px-2.5 py-1 sm:px-2 sm:py-0.5 min-w-[34px] min-h-[34px] sm:min-w-0 sm:min-h-0 text-xs font-bold rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50" title="Zoom In Table">+</button>
                         </div>
                     </div>
-                    <div id="inlineExcelTableViewport" class="flex-1 overflow-auto">
+                    <div id="inlineExcelTableViewport" tabindex="0" role="region" aria-label="Excel Sheet Preview" class="flex-1 overflow-auto">
                         ${renderInlineExcelSheetTable(ws)}
                     </div>
                 </div>
@@ -937,7 +937,7 @@
                     if (!window.docx || typeof window.docx.renderAsync !== "function") {
                         throw new Error("Word preview library (docx-preview) is not loaded yet.");
                     }
-                    content.innerHTML = `<div id="inlineDocxRenderContainer" class="w-full h-full overflow-auto bg-gray-200 dark:bg-gray-900 p-4 rounded-xl"></div>`;
+                    content.innerHTML = `<div id="inlineDocxRenderContainer" class="w-full h-full overflow-auto bg-gray-200 dark:bg-gray-900 p-2 sm:p-4 rounded-xl"></div>`;
                     const docxContainer = document.getElementById("inlineDocxRenderContainer");
                     await window.docx.renderAsync(byteArray, docxContainer, null, {
                         inWrapper: true,
@@ -952,7 +952,7 @@
                 if (isPptx && mimeType !== "application/pdf") {
                     await loadPptxViewerLib();
                     const nativeFileReader = window.FileReader;
-                    content.innerHTML = `<div id="inlinePptxRenderContainer" class="w-full h-full overflow-auto bg-gray-200 dark:bg-gray-900 p-4 rounded-xl flex flex-col items-center gap-4"></div>`;
+                    content.innerHTML = `<div id="inlinePptxRenderContainer" class="w-full h-full overflow-auto bg-gray-200 dark:bg-gray-900 p-2 sm:p-4 rounded-xl flex flex-col items-center gap-3 sm:gap-4"></div>`;
                     const pptxContainer = document.getElementById("inlinePptxRenderContainer");
                     const initCanvas = document.createElement("canvas");
                     initCanvas.width = 1280;
@@ -994,13 +994,14 @@
 
                 if (mimeType.startsWith("image/")) {
                     content.innerHTML = `
-                        <div class="w-full h-full flex items-center justify-center p-4 overflow-auto">
+                        <div class="w-full h-full flex items-center justify-center p-2 sm:p-4 overflow-auto">
                             <img src="${currentInlineDocBlobUrl}" alt="${fileName}" class="max-w-full max-h-full object-contain rounded-lg shadow-md border dark:border-gray-700">
                         </div>
                     `;
                 } else if (mimeType === "application/pdf") {
                     content.innerHTML = `
-                        <iframe src="${currentInlineDocBlobUrl}#toolbar=1&navpanes=1" 
+                        <iframe src="${currentInlineDocBlobUrl}#toolbar=1&navpanes=0"
+                                title="${escapeHtml(fileName || 'Document PDF Preview')}"
                                 class="w-full h-full rounded-xl border dark:border-gray-700 bg-white shadow-inner" 
                                 style="border: none;"></iframe>
                     `;
@@ -1204,6 +1205,122 @@
             content-visibility: auto;
             contain-intrinsic-size: auto 240px;
         }
+
+        /* =========================================================
+           MODERN WEB GUIDANCE: RESPONSIVE & FORM-FACTOR ADAPTATIONS
+           ========================================================= */
+        html {
+            scroll-padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+        }
+
+        body {
+            overflow-wrap: break-word;
+        }
+
+        h1, h2, h3 {
+            text-wrap: balance;
+        }
+
+        p, li {
+            text-wrap: pretty;
+        }
+
+        #mainHeader h1 {
+            font-size: clamp(0.9rem, 0.74rem + 0.75vw, 1.25rem);
+        }
+
+        /* Container queries for comparison table & card deck */
+        #modalTableContainer,
+        #deckGrid {
+            container-type: inline-size;
+        }
+
+        #comparisonTable {
+            --cmp-feature-col-w: 220px;
+            --cmp-prod-col-min-w: 260px;
+        }
+
+        @container (max-width: 600px) {
+            #comparisonTable {
+                --cmp-feature-col-w: 118px;
+                --cmp-prod-col-min-w: 205px;
+            }
+        }
+
+        /* Smartphone (< 640px) responsive adaptations */
+        @media (max-width: 639.98px) {
+            #comparisonTable {
+                --cmp-feature-col-w: 118px;
+                --cmp-prod-col-min-w: 205px;
+            }
+
+            /* Collapsible Filter & Sort drawer on smartphone */
+            #filterContainer.mobile-filters-collapsed {
+                display: none !important;
+            }
+
+            #filterContainer:not(.mobile-filters-collapsed) {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.375rem;
+                max-block-size: min(42dvh, 18rem);
+                overflow-y: auto;
+                padding-block-start: 0.25rem;
+            }
+
+            #filterContainer:not(.mobile-filters-collapsed) > #btnResetAllFilters,
+            #filterContainer:not(.mobile-filters-collapsed) > .custom-select:last-child:nth-child(odd) {
+                grid-column: span 2 / span 2;
+            }
+
+            /* Keep dropdown menus strictly inside mobile viewport bounds */
+            #filterStickyWrapper .dropdown-content {
+                position: fixed !important;
+                inset-inline: 0.75rem !important;
+                width: auto !important;
+                max-inline-size: calc(100dvw - 1.5rem) !important;
+                max-block-size: min(56dvh, 19rem) !important;
+                z-index: 60 !important;
+                margin-top: 0 !important;
+            }
+
+            /* Floating comparison dock safe-area & offscreen hide offset */
+            #compareBar {
+                padding-bottom: max(0.625rem, env(safe-area-inset-bottom, 0px));
+            }
+
+            #compareBar.translate-y-32 {
+                transform: translate(-50%, 12rem) !important;
+            }
+
+            /* Responsive Word (.docx) preview inside mobile modal */
+            #inlineDocxRenderContainer .docx-wrapper {
+                padding: 0.5rem !important;
+            }
+
+            #inlineDocxRenderContainer .docx-wrapper > section.docx {
+                width: 100% !important;
+                min-width: 0 !important;
+                padding: 0.75rem !important;
+                box-shadow: none !important;
+            }
+        }
+
+        /* Touch target sizing on coarse pointers (WCAG 2.5.8 / 2.5.5) */
+        @media (pointer: coarse) {
+            :where(
+                #filterStickyWrapper button,
+                #filterStickyWrapper input[type="text"],
+                #compareBar button,
+                #authGateOverlay button[type="submit"],
+                #authGateOverlay input:not([type="checkbox"], [type="radio"]),
+                #detailModal .modal-touch-btn,
+                #uploadModal .modal-touch-btn,
+                #inlineDocViewerModal .modal-touch-btn
+            ) {
+                min-block-size: 40px;
+            }
+        }
     </style>
 </head>
 
@@ -1212,105 +1329,106 @@
 
     <!-- Authentication Gate: Sign In, Sign Up, & Forgot Password OTP -->
     <div id="authGateOverlay"
-        class="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4 overflow-y-auto">
+        class="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
         <div
             class="w-full max-w-md bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/80 overflow-hidden my-auto">
             <!-- Header Card Auth -->
             <div
-                class="p-6 bg-gradient-to-r from-blue-900 to-indigo-900 dark:from-slate-950 dark:to-blue-950 text-white text-center relative">
-                <button type="button" onclick="toggleTheme()"
-                    class="absolute top-3.5 right-3.5 w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xs transition"
+                class="p-4 sm:p-6 bg-gradient-to-r from-blue-900 to-indigo-900 dark:from-slate-950 dark:to-blue-950 text-white text-center relative">
+                <button type="button" onclick="toggleTheme()" aria-label="Switch Light or Dark Theme"
+                    class="absolute top-3 right-3 w-10 h-10 sm:w-8 sm:h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xs transition"
                     title="Switch Light / Dark Theme">
-                    <i class="fa-solid fa-circle-half-stroke"></i>
+                    <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
                 </button>
                 <div
-                    class="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center mx-auto mb-3 shadow-inner">
-                    <i class="fa-solid fa-shield-halved text-2xl text-blue-300"></i>
+                    class="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center mx-auto mb-2.5 sm:mb-3 shadow-inner">
+                    <i class="fa-solid fa-shield-halved text-xl sm:text-2xl text-blue-300" aria-hidden="true"></i>
                 </div>
-                <h2 class="text-base sm:text-lg font-extrabold tracking-tight">Life Insurance Comparison Maker</h2>
+                <h2 class="text-base sm:text-lg font-extrabold tracking-tight px-6">Life Insurance Comparison Maker</h2>
                 <p class="text-[11px] text-blue-200/90 mt-0.5">Insurance &amp; DPLK Product Database Portal</p>
             </div>
 
             <!-- Tab Switcher (Sign In / Sign Up) -->
             <div id="authTabSwitcher"
-                class="grid grid-cols-2 bg-gray-100 dark:bg-slate-800/90 p-1.5 m-5 mb-0 rounded-xl border border-gray-200 dark:border-slate-700">
+                class="grid grid-cols-2 bg-gray-100 dark:bg-slate-800/90 p-1.5 m-3.5 sm:m-5 mb-0 rounded-xl border border-gray-200 dark:border-slate-700">
                 <button type="button" id="tabBtnAuthSignIn" onclick="switchAuthTab('signin')"
-                    class="py-2 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-sm">
-                    <i class="fa-solid fa-right-to-bracket me-1"></i> Sign In
+                    class="py-2.5 sm:py-2 min-h-[40px] sm:min-h-0 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-sm">
+                    <i class="fa-solid fa-right-to-bracket me-1" aria-hidden="true"></i> Sign In
                 </button>
                 <button type="button" id="tabBtnAuthSignUp" onclick="switchAuthTab('signup')"
-                    class="py-2 text-xs font-bold rounded-lg transition text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
-                    <i class="fa-solid fa-user-plus me-1"></i> Sign Up
+                    class="py-2.5 sm:py-2 min-h-[40px] sm:min-h-0 text-xs font-bold rounded-lg transition text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+                    <i class="fa-solid fa-user-plus me-1" aria-hidden="true"></i> Sign Up
                 </button>
             </div>
 
             <!-- Alert / Auth Status Message -->
-            <div id="authAlertBox" class="hidden mx-5 mt-4 p-3 rounded-xl text-xs font-medium border"></div>
+            <div id="authAlertBox" class="hidden mx-3.5 sm:mx-5 mt-3.5 sm:mt-4 p-3 rounded-xl text-xs font-medium border"></div>
 
             <!-- VIEW 1: SIGN IN -->
-            <form id="authViewSignIn" onsubmit="handleSignInSubmit(event)" class="p-5 space-y-3.5 text-xs">
+            <form id="authViewSignIn" onsubmit="handleSignInSubmit(event)" class="p-3.5 sm:p-5 space-y-3.5 text-xs">
                 <div>
                     <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Username or Email</label>
                     <div class="relative">
-                        <i class="fa-solid fa-user absolute left-3 top-2.5 text-gray-400"></i>
+                        <i class="fa-solid fa-user absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true"></i>
                         <input type="text" id="authSignInIdentifier" required autocomplete="username"
                             placeholder="Enter username or email..."
-                            class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full pl-9 pr-3 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                 </div>
                 <div>
                     <div class="flex justify-between items-center mb-1">
                         <label class="font-bold text-gray-700 dark:text-gray-300">Password</label>
                         <button type="button" onclick="switchAuthTab('forgot')"
-                            class="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                            class="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline py-1">
                             Forgot Password?
                         </button>
                     </div>
                     <div class="relative">
-                        <i class="fa-solid fa-lock absolute left-3 top-2.5 text-gray-400"></i>
+                        <i class="fa-solid fa-lock absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true"></i>
                         <input type="password" id="authSignInPassword" required autocomplete="current-password"
                             placeholder="Enter password..."
-                            class="w-full pl-9 pr-9 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full pl-9 pr-10 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                         <button type="button" onclick="toggleAuthPasswordVisibility('authSignInPassword', this)"
-                            class="absolute right-2.5 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
-                            <i class="fa-solid fa-eye"></i>
+                            aria-label="Toggle password visibility"
+                            class="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg">
+                            <i class="fa-solid fa-eye" aria-hidden="true"></i>
                         </button>
                     </div>
                 </div>
                 <div class="flex items-center justify-between pt-0.5">
                     <label
-                        class="inline-flex items-center gap-2 cursor-pointer select-none text-gray-600 dark:text-gray-300">
+                        class="inline-flex items-center gap-2 cursor-pointer select-none text-gray-600 dark:text-gray-300 py-1">
                         <input type="checkbox" id="authRememberMe" checked
                             class="w-4 h-4 rounded text-blue-600 accent-blue-600 cursor-pointer">
                         <span>Remember me on this device</span>
                     </label>
                 </div>
                 <button type="submit" id="btnSubmitSignIn"
-                    class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs mt-2">
-                    <i class="fa-solid fa-right-to-bracket"></i> Sign In
+                    class="w-full py-3 sm:py-2.5 min-h-[44px] sm:min-h-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs mt-2">
+                    <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i> Sign In
                 </button>
             </form>
 
             <!-- VIEW 2: SIGN UP -->
-            <form id="authViewSignUp" onsubmit="handleSignUpSubmit(event)" class="hidden p-5 space-y-3 text-xs">
+            <form id="authViewSignUp" onsubmit="handleSignUpSubmit(event)" class="hidden p-3.5 sm:p-5 space-y-3 text-xs">
                 <div>
                     <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Username <span
                             class="text-red-500">*</span></label>
                     <div class="relative">
-                        <i class="fa-solid fa-user-tag absolute left-3 top-2.5 text-gray-400"></i>
+                        <i class="fa-solid fa-user-tag absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true"></i>
                         <input type="text" id="authSignUpUsername" required minlength="3" autocomplete="username"
                             placeholder="e.g. budi_santoso (min. 3 characters)"
-                            class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full pl-9 pr-3 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                 </div>
                 <div>
                     <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Active Email <span
                             class="text-red-500">*</span></label>
                     <div class="relative">
-                        <i class="fa-solid fa-envelope absolute left-3 top-2.5 text-gray-400"></i>
+                        <i class="fa-solid fa-envelope absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true"></i>
                         <input type="email" id="authSignUpEmail" required autocomplete="email"
                             placeholder="Used to receive OTP if you forget your password"
-                            class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full pl-9 pr-3 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1320,10 +1438,11 @@
                         <div class="relative">
                             <input type="password" id="authSignUpPassword" required minlength="6"
                                 autocomplete="new-password" placeholder="Min. 6 characters"
-                                class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                class="w-full pl-3 pr-9 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                             <button type="button" onclick="toggleAuthPasswordVisibility('authSignUpPassword', this)"
-                                class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
-                                <i class="fa-solid fa-eye"></i>
+                                aria-label="Toggle password visibility"
+                                class="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg">
+                                <i class="fa-solid fa-eye" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -1333,10 +1452,11 @@
                         <div class="relative">
                             <input type="password" id="authSignUpConfirm" required minlength="6"
                                 autocomplete="new-password" placeholder="Re-enter password"
-                                class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                class="w-full pl-3 pr-9 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                             <button type="button" onclick="toggleAuthPasswordVisibility('authSignUpConfirm', this)"
-                                class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
-                                <i class="fa-solid fa-eye"></i>
+                                aria-label="Toggle confirm password visibility"
+                                class="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg">
+                                <i class="fa-solid fa-eye" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -1345,33 +1465,34 @@
                     <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Team Invite Code <span
                             class="text-red-500">*</span></label>
                     <div class="relative">
-                        <i class="fa-solid fa-key absolute left-3 top-2.5 text-amber-500"></i>
-                        <input type="password" id="authSignUpInviteCode" required
+                        <i class="fa-solid fa-key absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" aria-hidden="true"></i>
+                        <input type="password" id="authSignUpInviteCode" required autocomplete="off"
                             placeholder="Enter team registration invite code..."
-                            class="w-full pl-9 pr-9 py-2 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50/40 dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none">
+                            class="w-full pl-9 pr-10 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50/40 dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none">
                         <button type="button" onclick="toggleAuthPasswordVisibility('authSignUpInviteCode', this)"
-                            class="absolute right-2.5 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
-                            <i class="fa-solid fa-eye"></i>
+                            aria-label="Toggle invite code visibility"
+                            class="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg">
+                            <i class="fa-solid fa-eye" aria-hidden="true"></i>
                         </button>
                     </div>
                     <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-1">Invite Code is managed in the
                         <strong>Config</strong> tab of Master Google Sheets.</p>
                 </div>
                 <button type="submit" id="btnSubmitSignUp"
-                    class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs mt-1">
-                    <i class="fa-solid fa-user-check"></i> Sign Up &amp; Enter
+                    class="w-full py-3 sm:py-2.5 min-h-[44px] sm:min-h-0 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs mt-1">
+                    <i class="fa-solid fa-user-check" aria-hidden="true"></i> Sign Up &amp; Enter
                 </button>
             </form>
 
             <!-- VIEW 3: FORGOT PASSWORD (OTP EMAIL) -->
-            <div id="authViewForgot" class="hidden p-5 space-y-3.5 text-xs">
+            <div id="authViewForgot" class="hidden p-3.5 sm:p-5 space-y-3.5 text-xs">
                 <div class="flex items-center justify-between">
                     <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
-                        <i class="fa-solid fa-unlock-keyhole text-amber-500"></i> Password Recovery (Email OTP)
+                        <i class="fa-solid fa-unlock-keyhole text-amber-500" aria-hidden="true"></i> Password Recovery (Email OTP)
                     </h3>
                     <button type="button" onclick="switchAuthTab('signin')"
-                        class="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
-                        <i class="fa-solid fa-arrow-left text-[10px]"></i> Back
+                        class="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 py-1.5 px-2">
+                        <i class="fa-solid fa-arrow-left text-[10px]" aria-hidden="true"></i> Back
                     </button>
                 </div>
 
@@ -1385,15 +1506,15 @@
                         <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Registered Email or
                             Username</label>
                         <div class="relative">
-                            <i class="fa-solid fa-envelope-circle-check absolute left-3 top-2.5 text-gray-400"></i>
+                            <i class="fa-solid fa-envelope-circle-check absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true"></i>
                             <input type="text" id="authForgotIdentifier" required
                                 placeholder="Type your email or username..."
-                                class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                class="w-full pl-9 pr-3 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                         </div>
                     </div>
                     <button type="submit" id="btnRequestOtp"
-                        class="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2">
-                        <i class="fa-solid fa-paper-plane"></i> Send OTP Code to Email
+                        class="w-full py-3 sm:py-2.5 min-h-[44px] sm:min-h-0 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Send OTP Code to Email
                     </button>
                 </form>
 
@@ -1403,21 +1524,22 @@
                     <div>
                         <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">OTP Code (6 Digits from
                             Email)</label>
-                        <input type="text" id="authForgotOtpCode" required maxlength="6" pattern="\d{6}"
+                        <input type="text" id="authForgotOtpCode" required maxlength="6" pattern="\d{6}" autocomplete="one-time-code"
                             placeholder="e.g. 482910"
-                            class="w-full px-3 py-2 rounded-xl border border-blue-400 dark:border-blue-600 bg-blue-50/40 dark:bg-slate-800 text-center font-mono text-base font-extrabold tracking-[0.35em] text-blue-800 dark:text-blue-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full px-3 py-2.5 sm:py-2 min-h-[44px] sm:min-h-0 rounded-xl border border-blue-400 dark:border-blue-600 bg-blue-50/40 dark:bg-slate-800 text-center font-mono text-base font-extrabold tracking-[0.35em] text-blue-800 dark:text-blue-300 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                             <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">New Password</label>
                             <div class="relative">
-                                <input type="password" id="authForgotNewPassword" required minlength="6"
+                                <input type="password" id="authForgotNewPassword" required minlength="6" autocomplete="new-password"
                                     placeholder="Min. 6 characters"
-                                    class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                    class="w-full pl-3 pr-9 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                                 <button type="button"
                                     onclick="toggleAuthPasswordVisibility('authForgotNewPassword', this)"
-                                    class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
-                                    <i class="fa-solid fa-eye"></i>
+                                    aria-label="Toggle new password visibility"
+                                    class="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg">
+                                    <i class="fa-solid fa-eye" aria-hidden="true"></i>
                                 </button>
                             </div>
                         </div>
@@ -1425,20 +1547,21 @@
                             <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Confirm New
                                 Password</label>
                             <div class="relative">
-                                <input type="password" id="authForgotConfirmPassword" required minlength="6"
+                                <input type="password" id="authForgotConfirmPassword" required minlength="6" autocomplete="new-password"
                                     placeholder="Re-enter"
-                                    class="w-full pl-3 pr-8 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
+                                    class="w-full pl-3 pr-9 py-2.5 sm:py-2 min-h-[42px] sm:min-h-0 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none">
                                 <button type="button"
                                     onclick="toggleAuthPasswordVisibility('authForgotConfirmPassword', this)"
-                                    class="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1">
-                                    <i class="fa-solid fa-eye"></i>
+                                    aria-label="Toggle confirm password visibility"
+                                    class="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg">
+                                    <i class="fa-solid fa-eye" aria-hidden="true"></i>
                                 </button>
                             </div>
                         </div>
                     </div>
                     <button type="submit" id="btnResetPasswordSubmit"
-                        class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2">
-                        <i class="fa-solid fa-check-double"></i> Save New Password
+                        class="w-full py-3 sm:py-2.5 min-h-[44px] sm:min-h-0 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-check-double" aria-hidden="true"></i> Save New Password
                     </button>
                 </form>
             </div>
@@ -1447,99 +1570,114 @@
 
     <!-- Navbar Header -->
     <header id="mainHeader"
-        class="bg-blue-900 dark:bg-slate-900 dark:border-b dark:border-slate-800 text-white p-3.5 sm:p-4 shadow-md sticky top-0 z-40 transition-colors duration-200">
-        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-3">
-            <h1 class="text-xl font-bold flex items-center gap-2">
-                <i class="fa-solid me-1 fa-shield-halved"></i> Life Insurance Database and Comparison Maker
+        class="bg-blue-900 dark:bg-slate-900 dark:border-b dark:border-slate-800 text-white px-2.5 py-2 sm:p-4 shadow-md sticky top-0 z-40 transition-colors duration-200">
+        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-1.5 sm:gap-3">
+            <h1 class="font-bold flex items-center gap-1.5 sm:gap-2 leading-tight min-w-0 w-full sm:w-auto">
+                <i class="fa-solid fa-shield-halved shrink-0" aria-hidden="true"></i>
+                <span class="truncate sm:whitespace-normal">Life Insurance Database and Comparison Maker</span>
                 <!-- Link to Master Google Sheets -->
                 <a href="https://docs.google.com/spreadsheets/d/1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI/edit"
-                    target="_blank" title="Open Master Database" class="ml-2 text-blue-300 hover:text-white transition">
-                    <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
+                    target="_blank" aria-label="Open Master Database in Google Sheets" title="Open Master Database" class="ml-auto sm:ml-2 text-blue-300 hover:text-white transition shrink-0 inline-flex items-center justify-center w-6 h-6">
+                    <i class="fa-solid fa-arrow-up-right-from-square text-xs sm:text-sm" aria-hidden="true"></i>
                 </a>
             </h1>
 
-            <div class="flex flex-wrap items-center gap-2">
+            <div class="flex flex-nowrap sm:flex-wrap items-center gap-1 sm:gap-2 w-full sm:w-auto justify-between sm:justify-end">
                 <!-- User Login Info & Logout Button -->
                 <div id="navUserContainer"
-                    class="hidden items-center gap-1.5 bg-blue-950/90 dark:bg-slate-950 px-2.5 py-1.5 rounded-lg border border-blue-800 dark:border-slate-800 h-9">
-                    <i class="fa-solid fa-circle-user text-emerald-400 text-sm"></i>
+                    class="hidden items-center gap-1 sm:gap-1.5 bg-blue-950/90 dark:bg-slate-950 px-1.5 sm:px-2.5 py-1 sm:py-1.5 rounded-lg border border-blue-800 dark:border-slate-800 h-8 sm:h-9 shrink-0">
+                    <i class="fa-solid fa-circle-user text-emerald-400 text-xs sm:text-sm" aria-hidden="true"></i>
                     <span id="navUsernameLabel"
-                        class="text-xs font-semibold text-blue-100 max-w-[120px] truncate">User</span>
-                    <button type="button" onclick="handleLogout()"
-                        class="ms-1.5 pl-2 border-l border-blue-800 dark:border-slate-700 text-red-300 hover:text-red-200 text-xs font-bold transition flex items-center gap-1"
+                        class="text-[11px] sm:text-xs font-semibold text-blue-100 max-w-[58px] sm:max-w-[120px] truncate">User</span>
+                    <button type="button" onclick="handleLogout()" aria-label="Sign Out"
+                        class="ms-1 sm:ms-1.5 pl-1.5 sm:pl-2 border-l border-blue-800 dark:border-slate-700 text-red-300 hover:text-red-200 text-xs font-bold transition flex items-center gap-1"
                         title="Sign Out">
-                        <i class="fa-solid fa-right-from-bracket"></i>
+                        <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
                         <span class="hidden sm:inline">Sign Out</span>
                     </button>
                 </div>
-                <!-- Dark / Light Mode Toggle Button -->
-                <button onclick="toggleTheme()" id="themeToggleBtn"
-                    class="bg-blue-800 hover:bg-blue-700 dark:bg-[#0a1128] dark:hover:bg-[#121c3d] text-white w-9 h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-blue-700 dark:border-slate-700"
-                    title="Switch to Dark Mode">
-                    <span id="themeIcon" class="flex items-center justify-center">
-                        <svg viewBox="0 0 24 24" class="w-6 h-6" aria-hidden="true">
-                            <defs>
-                                <mask id="themeMoonMask" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-                                    <rect width="24" height="24" fill="white" />
-                                    <circle class="ti-cutter" cx="16.243" cy="7.757" r="7.5" fill="black" />
-                                </mask>
-                            </defs>
-                            <g mask="url(#themeMoonMask)">
-                                <circle cx="12" cy="12" r="9" fill="#ffffff" />
-                                <g class="ti-face">
-                                    <circle cx="12" cy="12" r="8" fill="#fde047" />
-                                    <path d="M7.836 5.169A8 8 0 1 0 18.831 16.164A8 8 0 0 1 7.836 5.169Z"
-                                        fill="#eab308" />
+                <div class="flex items-center gap-1 sm:gap-2 shrink-0">
+                    <!-- Dark / Light Mode Toggle Button -->
+                    <button onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle Dark or Light Mode"
+                        class="bg-blue-800 hover:bg-blue-700 dark:bg-[#0a1128] dark:hover:bg-[#121c3d] text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-blue-700 dark:border-slate-700 shrink-0"
+                        title="Switch to Dark Mode">
+                        <span id="themeIcon" class="flex items-center justify-center">
+                            <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-6 sm:h-6" aria-hidden="true">
+                                <defs>
+                                    <mask id="themeMoonMask" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+                                        <rect width="24" height="24" fill="white" />
+                                        <circle class="ti-cutter" cx="16.243" cy="7.757" r="7.5" fill="black" />
+                                    </mask>
+                                </defs>
+                                <g mask="url(#themeMoonMask)">
+                                    <circle cx="12" cy="12" r="9" fill="#ffffff" />
+                                    <g class="ti-face">
+                                        <circle cx="12" cy="12" r="8" fill="#fde047" />
+                                        <path d="M7.836 5.169A8 8 0 1 0 18.831 16.164A8 8 0 0 1 7.836 5.169Z"
+                                            fill="#eab308" />
+                                    </g>
                                 </g>
-                            </g>
-                        </svg>
-                    </span>
-                </button>
+                            </svg>
+                        </span>
+                    </button>
 
-                <!-- Refresh Data Button -->
-                <button onclick="fetchAllSheetData(true)"
-                    class="bg-blue-800 hover:bg-blue-700 dark:bg-slate-800 dark:hover:bg-slate-700 text-white w-9 h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-transparent dark:border-slate-700"
-                    title="Refresh Data">
-                    <i class="fa-solid fa-rotate text-sm" id="refreshIcon"></i>
-                </button>
+                    <!-- Refresh Data Button -->
+                    <button onclick="fetchAllSheetData(true)" aria-label="Refresh Data"
+                        class="bg-blue-800 hover:bg-blue-700 dark:bg-slate-800 dark:hover:bg-slate-700 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-transparent dark:border-slate-700 shrink-0"
+                        title="Refresh Data">
+                        <i class="fa-solid fa-rotate text-xs sm:text-sm" id="refreshIcon" aria-hidden="true"></i>
+                    </button>
 
-                <!-- Upload Excel / Add Product Button -->
-                <button onclick="openUploadModal()"
-                    class="bg-green-600 hover:bg-green-500 text-white w-9 h-9 rounded-lg flex items-center justify-center shadow-sm transition"
-                    title="Add Product / Upload Excel">
-                    <i class="fa-solid fa-file-arrow-up text-sm"></i>
-                </button>
+                    <!-- Upload Excel / Add Product Button -->
+                    <button onclick="openUploadModal()" aria-label="Add Product or Upload Excel"
+                        class="bg-green-600 hover:bg-green-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
+                        title="Add Product / Upload Excel">
+                        <i class="fa-solid fa-file-arrow-up text-xs sm:text-sm" aria-hidden="true"></i>
+                    </button>
 
-                <!-- Bulk Document Upload Button -->
-                <button onclick="openBulkDocUploadModal()"
-                    class="bg-indigo-600 hover:bg-indigo-500 text-white w-9 h-9 rounded-lg flex items-center justify-center shadow-sm transition"
-                    title="Upload Product Documents (Bulk Google Drive)">
-                    <i class="fa-solid fa-folder-plus text-sm"></i>
-                </button>
+                    <!-- Bulk Document Upload Button -->
+                    <button onclick="openBulkDocUploadModal()" aria-label="Upload Product Documents in Bulk"
+                        class="bg-indigo-600 hover:bg-indigo-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
+                        title="Upload Product Documents (Bulk Google Drive)">
+                        <i class="fa-solid fa-folder-plus text-xs sm:text-sm" aria-hidden="true"></i>
+                    </button>
+                </div>
 
                 <span
-                    class="text-xs bg-blue-950 dark:bg-slate-950 px-3 py-2 rounded-lg text-blue-200 dark:text-slate-300 border border-blue-800 dark:border-slate-800 font-medium h-9 flex items-center"
+                    class="text-[11px] sm:text-xs bg-blue-950 dark:bg-slate-950 px-2 sm:px-3 py-1 sm:py-2 rounded-lg text-blue-200 dark:text-slate-300 border border-blue-800 dark:border-slate-800 font-medium h-8 sm:h-9 flex items-center whitespace-nowrap ms-auto sm:ms-0 shrink-0"
                     id="totalProductCount">Loading data...</span>
             </div>
         </div>
     </header>
 
-    <main class="max-w-7xl mx-auto p-4 md:p-6">
+    <main class="max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
         <!-- Filter & Search Bar (Sticky Dashboard) -->
         <div id="filterStickyWrapper"
-            class="sticky z-30 pt-1 pb-3 bg-gray-100/95 dark:bg-gray-900/95 backdrop-blur-md transition-all"
+            class="sticky z-30 pt-1 pb-2.5 sm:pb-3 bg-gray-100/95 dark:bg-gray-900/95 backdrop-blur-md transition-all"
             style="top: 65px;">
             <div
-                class="bg-white dark:bg-gray-800 dark:border dark:border-gray-700 p-2.5 sm:p-3 rounded-xl shadow-md flex flex-col md:flex-row gap-2.5 items-center transition-colors duration-200">
-                <!-- Search Box -->
-                <div class="relative w-full md:w-56 lg:w-64 shrink-0">
-                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-gray-400"></i>
-                    <input type="text" id="searchInput" oninput="filterData()" placeholder="Search product name..."
-                        class="w-full pl-9 pr-3 py-1.5 border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm transition-colors">
+                class="bg-white dark:bg-gray-800 dark:border dark:border-gray-700 p-2 sm:p-3 rounded-xl shadow-md flex flex-col md:flex-row gap-2 sm:gap-2.5 items-stretch md:items-center transition-colors duration-200">
+                <!-- Search Box + Mobile Collapsible Filter & Sort Trigger -->
+                <div class="flex items-center gap-1.5 w-full md:w-56 lg:w-64 shrink-0">
+                    <div class="relative flex-1 min-w-0">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400" aria-hidden="true"></i>
+                        <input type="text" id="searchInput" oninput="filterData()" placeholder="Search product name..."
+                            aria-label="Search product name or company"
+                            class="w-full pl-9 pr-3 py-2 sm:py-1.5 border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm transition-colors">
+                    </div>
+                    <button type="button" id="btnMobileFilterToggle" onclick="toggleMobileFilterPanel(event)"
+                        aria-expanded="false" aria-controls="filterContainer"
+                        class="sm:hidden inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg border border-blue-200 dark:border-slate-600 bg-blue-50 dark:bg-slate-700 text-blue-700 dark:text-blue-300 text-xs font-bold shrink-0 transition">
+                        <i class="fa-solid fa-sliders text-xs" aria-hidden="true"></i>
+                        <span>Filter &amp; Sort</span>
+                        <span id="mobileActiveFilterBadge"
+                            class="hidden px-1.5 py-0.5 text-[10px] rounded-full bg-blue-600 text-white font-extrabold leading-none">0</span>
+                        <i id="mobileFilterChevron" class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" aria-hidden="true"></i>
+                    </button>
                 </div>
 
                 <!-- Custom Multi-Select Dropdowns -->
-                <div class="flex flex-wrap gap-2 w-full justify-end items-center" id="filterContainer">
+                <div class="mobile-filters-collapsed flex flex-wrap gap-2 w-full justify-end items-center" id="filterContainer">
 
                     <div class="relative custom-select">
                         <button
@@ -1714,77 +1852,78 @@
 
     <!-- Floating Comparison Bar -->
     <div id="compareBar"
-        class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-slate-800 dark:border dark:border-slate-700 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 transition-all transform translate-y-32 z-40">
-        <span class="text-sm font-medium whitespace-nowrap"><span id="selectedCount"
+        class="fixed bottom-2.5 sm:bottom-4 left-1/2 -translate-x-1/2 w-[calc(100dvw-1rem)] max-w-[calc(100dvw-1rem)] sm:w-auto sm:max-w-[calc(100dvw-2rem)] bg-gray-900/95 dark:bg-slate-800/95 backdrop-blur-md border border-gray-700/80 dark:border-slate-700 text-white px-3 py-2.5 sm:px-6 sm:py-3 rounded-2xl sm:rounded-full shadow-2xl grid grid-cols-6 sm:flex items-center gap-1.5 sm:gap-3 transition-all transform translate-y-32 z-40">
+        <span class="col-span-3 sm:col-auto text-xs sm:text-sm font-medium whitespace-nowrap truncate"><span id="selectedCount"
                 class="font-bold text-blue-400">0</span> product(s) selected</span>
         <button id="btnSelectAllVisible" onclick="selectAllVisible()"
-            class="text-gray-300 hover:text-white text-xs font-semibold px-2.5 py-1 rounded transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
-            <i class="fa-solid fa-check-double me-1"></i> Select All
+            class="col-span-2 sm:col-auto justify-self-end sm:justify-self-auto text-gray-300 hover:text-white text-[11px] sm:text-xs font-semibold px-2 sm:px-2.5 py-1.5 sm:py-1 rounded-lg transition border border-gray-600 hover:border-gray-400 whitespace-nowrap">
+            <i class="fa-solid fa-check-double me-1" aria-hidden="true"></i> Select All
         </button>
         <button onclick="openComparisonModal()"
-            class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition whitespace-nowrap">
-            <i class="fa-solid fa-columns me-1"></i> Compare
+            class="col-span-2 sm:col-auto bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-semibold px-2.5 sm:px-4 py-2 sm:py-1.5 rounded-xl sm:rounded-full transition whitespace-nowrap flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-columns" aria-hidden="true"></i> Compare
         </button>
         <button onclick="openBulkDownloadModal()"
-            class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-3.5 py-1.5 rounded-full transition whitespace-nowrap flex items-center gap-1.5 shadow"
+            class="col-span-2 sm:col-auto bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold px-2 sm:px-3.5 py-2 sm:py-1.5 rounded-xl sm:rounded-full transition whitespace-nowrap flex items-center justify-center gap-1.5 shadow"
             title="Download Selected Product Documents (.ZIP)">
-            <i class="fa-solid fa-file-zipper"></i> Documents
+            <i class="fa-solid fa-file-zipper" aria-hidden="true"></i> Documents
         </button>
         <button onclick="openDeleteConfirmModal(selectedProductIds)"
-            class="bg-red-600 hover:bg-red-500 text-white text-sm font-semibold px-3.5 py-1.5 rounded-full transition whitespace-nowrap flex items-center gap-1.5"
+            class="col-span-2 sm:col-auto bg-red-600 hover:bg-red-500 text-white text-xs sm:text-sm font-semibold px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl sm:rounded-full transition whitespace-nowrap flex items-center justify-center gap-1.5"
             title="Delete selected products from Google Sheets">
-            <i class="fa-solid fa-trash-can"></i> Delete
+            <i class="fa-solid fa-trash-can" aria-hidden="true"></i> Delete
         </button>
         <button onclick="clearSelection()"
-            class="text-gray-400 hover:text-white text-xs underline whitespace-nowrap ms-1">Cancel</button>
+            class="col-span-1 row-start-1 col-start-6 sm:col-auto sm:row-auto justify-self-end sm:justify-self-auto text-gray-300 hover:text-white text-xs underline whitespace-nowrap ms-0 sm:ms-1 py-1">Cancel</button>
     </div>
 
     <!-- Modal Upload Excel & Manual Add to Google Sheets -->
-    <div id="uploadModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+    <div id="uploadModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
             <div id="uploadModalHeader"
-                class="p-4 bg-sky-600 text-white flex justify-between items-center transition-colors duration-200">
-                <h3 class="font-bold text-base flex items-center gap-2">
-                    <i class="fa-solid fa-database text-lg"></i> Add Product to Master Google Sheets
+                class="p-3 sm:p-4 bg-sky-600 text-white flex justify-between items-center gap-2 transition-colors duration-200">
+                <h3 class="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0 truncate">
+                    <i class="fa-solid fa-database text-base sm:text-lg shrink-0" aria-hidden="true"></i>
+                    <span class="truncate">Add Product to Master Google Sheets</span>
                 </h3>
-                <button onclick="closeUploadModal()" class="text-gray-200 hover:text-white text-xl">&times;</button>
+                <button onclick="closeUploadModal()" aria-label="Close modal" class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-200 hover:text-white hover:bg-black/15 text-xl leading-none shrink-0">&times;</button>
             </div>
 
             <!-- Tab Switcher: Upload Excel vs Manual Add -->
             <div class="grid grid-cols-2 bg-gray-100 dark:bg-gray-900/70 p-1.5 gap-1.5 border-b dark:border-gray-700">
                 <button id="tabBtnExcel" type="button" onclick="switchAddModalTab('excel')"
-                    class="py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 bg-white dark:bg-gray-800 text-sky-600 dark:text-sky-400 shadow-sm">
-                    <i class="fa-solid fa-file-excel"></i> Upload Excel File
+                    class="modal-touch-btn py-2.5 sm:py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 bg-white dark:bg-gray-800 text-sky-600 dark:text-sky-400 shadow-sm">
+                    <i class="fa-solid fa-file-excel" aria-hidden="true"></i> Upload Excel File
                 </button>
                 <button id="tabBtnManual" type="button" onclick="switchAddModalTab('manual')"
-                    class="py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200">
-                    <i class="fa-solid fa-file-circle-plus"></i> Add Manually
+                    class="modal-touch-btn py-2.5 sm:py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200">
+                    <i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> Add Manually
                 </button>
             </div>
 
             <!-- TAB 1: UPLOAD EXCEL FILE -->
-            <div id="uploadTabExcel" class="p-6 space-y-4 overflow-y-auto flex-1">
+            <div id="uploadTabExcel" class="p-3 sm:p-6 space-y-4 overflow-y-auto flex-1">
                 <div>
                     <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Target Google
                         Sheets Tab:</label>
                     <div class="flex flex-wrap items-center gap-2">
                         <select id="uploadTargetSheet" onchange="onUploadTargetSheetChange()"
-                            class="flex-1 min-w-[180px] border dark:border-gray-600 text-sm rounded-lg p-2.5 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-sky-500 outline-none transition">
+                            class="flex-1 min-w-[160px] sm:min-w-[180px] border dark:border-gray-600 text-xs sm:text-sm rounded-lg p-2.5 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-sky-500 outline-none transition">
                             <option value="Conventional">Conventional</option>
                             <option value="Sharia">Sharia</option>
                             <option value="Health &amp; Surgical">Health &amp; Surgical</option>
                             <option value="DPLK">DPLK</option>
                         </select>
                         <button type="button" onclick="openSheetConfigModal('new')"
-                            class="px-2.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
+                            class="modal-touch-btn px-2.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
                             title="Create a new Google Sheet tab & configure its Provisions / Sections">
-                            <i class="fa-solid fa-folder-plus"></i> New Sheet
+                            <i class="fa-solid fa-folder-plus" aria-hidden="true"></i> New Sheet
                         </button>
                         <button type="button" onclick="openSheetConfigModal('edit', document.getElementById('uploadTargetSheet')?.value)"
-                            class="px-2.5 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
+                            class="modal-touch-btn px-2.5 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
                             title="Edit Provisions, Special Provisions & Product Sections for selected Category">
-                            <i class="fa-solid fa-sliders"></i> Edit Category
+                            <i class="fa-solid fa-sliders" aria-hidden="true"></i> Edit Category
                         </button>
                     </div>
                 </div>
@@ -1809,23 +1948,23 @@
 
                 <div class="pt-2 flex justify-end gap-2">
                     <button type="button" onclick="closeUploadModal()"
-                        class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                        class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
                     <button id="btnSubmitUpload" type="button" onclick="processAndUploadExcel()" disabled
-                        class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Sheets
+                        class="modal-touch-btn px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                        <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i> Upload to Google Sheets
                     </button>
                 </div>
             </div>
 
             <!-- TAB 2: ADD MANUALLY -->
             <div id="uploadTabManual" class="hidden flex-1 flex flex-col overflow-hidden">
-                <div id="manualFormBody" class="p-6 overflow-y-auto flex-1 space-y-3 text-xs"></div>
-                <div class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
+                <div id="manualFormBody" class="p-3 sm:p-6 overflow-y-auto flex-1 space-y-3 text-xs"></div>
+                <div class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                     <button type="button" onclick="closeUploadModal()"
-                        class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                        class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
                     <button id="btnSaveManualProduct" type="button" onclick="saveManualProduct()"
-                        class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-floppy-disk"></i> Save New Product
+                        class="modal-touch-btn px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save New Product
                     </button>
                 </div>
             </div>
@@ -1833,38 +1972,38 @@
     </div>
 
     <!-- Modal Configure Sheet / Category (Add New Sheet & Edit Category Provisions / Special Provisions / Product Sections) -->
-    <div id="sheetConfigModal" class="fixed inset-0 bg-black/65 z-[65] hidden flex items-center justify-center p-4">
-        <div class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-slate-800 dark:bg-slate-900 text-white flex justify-between items-center">
-                <h3 id="sheetConfigModalTitle" class="font-bold text-base flex items-center gap-2">
-                    <i class="fa-solid fa-sliders text-sky-400"></i> Configure Category / Sheet
+    <div id="sheetConfigModal" class="fixed inset-0 bg-black/65 z-[65] hidden flex items-center justify-center p-2.5 sm:p-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-2xl max-h-[92dvh] sm:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            <div class="p-3 sm:p-4 bg-slate-800 dark:bg-slate-900 text-white flex justify-between items-center gap-2">
+                <h3 id="sheetConfigModalTitle" class="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0 truncate">
+                    <i class="fa-solid fa-sliders text-sky-400 shrink-0" aria-hidden="true"></i> Configure Category / Sheet
                 </h3>
-                <button type="button" onclick="closeSheetConfigModal()" class="text-gray-300 hover:text-white text-xl leading-none">&times;</button>
+                <button type="button" onclick="closeSheetConfigModal()" aria-label="Close modal" class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-300 hover:text-white hover:bg-slate-700 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div id="sheetConfigModalBody" class="p-5 overflow-y-auto flex-1 space-y-4 text-xs"></div>
-            <div class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
+            <div id="sheetConfigModalBody" class="p-3 sm:p-5 overflow-y-auto flex-1 space-y-4 text-xs"></div>
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                 <button type="button" onclick="closeSheetConfigModal()"
-                    class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                    class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
                 <button id="btnSaveSheetCategoryConfig" type="button" onclick="saveSheetCategoryConfig()"
-                    class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
-                    <i class="fa-solid fa-floppy-disk"></i> Save Sheet &amp; Config
+                    class="modal-touch-btn px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Sheet &amp; Config
                 </button>
             </div>
         </div>
     </div>
 
     <!-- Delete Product Confirmation Modal -->
-    <div id="deleteConfirmModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">
+    <div id="deleteConfirmModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-red-600 text-white flex justify-between items-center">
-                <h3 class="font-bold text-base flex items-center gap-2">
-                    <i class="fa-solid fa-trash-can"></i> Confirm Product Deletion
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg max-h-[92dvh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            <div class="p-3 sm:p-4 bg-red-600 text-white flex justify-between items-center gap-2">
+                <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+                    <i class="fa-solid fa-trash-can" aria-hidden="true"></i> Confirm Product Deletion
                 </h3>
-                <button onclick="closeDeleteConfirmModal()"
-                    class="text-red-100 hover:text-white text-xl">&times;</button>
+                <button onclick="closeDeleteConfirmModal()" aria-label="Close modal"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-red-100 hover:text-white hover:bg-red-700 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="p-6 space-y-3.5 text-xs text-gray-700 dark:text-gray-200">
+            <div class="p-3.5 sm:p-6 space-y-3.5 text-xs text-gray-700 dark:text-gray-200 overflow-y-auto flex-1">
                 <p id="deleteConfirmSummary" class="text-sm font-medium"></p>
                 <div id="deleteConfirmList"
                     class="max-h-40 overflow-y-auto bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-800/60 rounded-xl p-3 space-y-1.5">
@@ -1884,7 +2023,7 @@
                         <div class="min-w-0 flex-1">
                             <div
                                 class="font-bold text-gray-800 dark:text-gray-100 flex items-center justify-between gap-2">
-                                <span><i class="fa-solid fa-images text-blue-500 me-1"></i> Delete Table Images
+                                <span><i class="fa-solid fa-images text-blue-500 me-1" aria-hidden="true"></i> Delete Table Images
                                     (Benefits, Specifications, etc.)</span>
                                 <span id="deleteTableImagesBadge"
                                     class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 shrink-0">0
@@ -1905,7 +2044,7 @@
                         <div class="min-w-0 flex-1">
                             <div
                                 class="font-bold text-gray-800 dark:text-gray-100 flex items-center justify-between gap-2">
-                                <span><i class="fa-solid fa-folder-minus text-amber-500 me-1"></i> Delete Product
+                                <span><i class="fa-solid fa-folder-minus text-amber-500 me-1" aria-hidden="true"></i> Delete Product
                                     Documents &amp; Folder in Google Drive</span>
                                 <span id="deleteProductDocsBadge"
                                     class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 shrink-0">0
@@ -1919,18 +2058,18 @@
                 </div>
 
                 <p class="text-[11px] text-gray-500 dark:text-gray-400">
-                    <i class="fa-solid fa-triangle-exclamation text-amber-500 me-1"></i>
+                    <i class="fa-solid fa-triangle-exclamation text-amber-500 me-1" aria-hidden="true"></i>
                     Deleted product rows will be permanently removed from Master Google Sheets and cannot be undone.
                 </p>
             </div>
-            <div class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                 <button type="button" onclick="closeDeleteConfirmModal()"
-                    class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                    class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
                     Cancel
                 </button>
                 <button id="btnExecuteDelete" type="button" onclick="executeDeleteProducts()"
-                    class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
-                    <i class="fa-solid fa-trash-can"></i> Yes, Delete Permanently
+                    class="modal-touch-btn px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-trash-can" aria-hidden="true"></i> Yes, Delete Permanently
                 </button>
             </div>
         </div>
@@ -1938,17 +2077,17 @@
 
     <!-- Category Mismatch Notice Modal (Insurance vs DPLK) -->
     <div id="categoryMismatchModal"
-        class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">
+        class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-amber-600 text-white flex justify-between items-center">
-                <h3 class="font-bold text-base flex items-center gap-2">
-                    <i class="fa-solid fa-triangle-exclamation text-lg"></i> Product Category Difference Notice
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg max-h-[92dvh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            <div class="p-3 sm:p-4 bg-amber-600 text-white flex justify-between items-center gap-2">
+                <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+                    <i class="fa-solid fa-triangle-exclamation text-base sm:text-lg" aria-hidden="true"></i> Product Category Difference Notice
                 </h3>
-                <button type="button" onclick="closeCategoryMismatchModal()"
-                    class="text-amber-100 hover:text-white text-xl leading-none">&times;</button>
+                <button type="button" onclick="closeCategoryMismatchModal()" aria-label="Close modal"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-amber-100 hover:text-white hover:bg-amber-700 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="p-6 space-y-3.5 text-xs text-gray-700 dark:text-gray-200">
+            <div class="p-3.5 sm:p-6 space-y-3.5 text-xs text-gray-700 dark:text-gray-200 overflow-y-auto flex-1">
                 <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 leading-relaxed">
                     You selected products from different categories: <span
                         class="text-blue-600 dark:text-blue-400">Insurance Products</span> and <span
@@ -1966,14 +2105,14 @@
                     Do you still want to proceed with comparing these products?
                 </p>
             </div>
-            <div class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                 <button type="button" onclick="closeCategoryMismatchModal()"
-                    class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                    class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
                     Cancel
                 </button>
                 <button type="button" onclick="proceedCrossCategoryComparison()"
-                    class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
-                    <i class="fa-solid fa-code-compare"></i> Yes, Compare Anyway
+                    class="modal-touch-btn px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i class="fa-solid fa-code-compare" aria-hidden="true"></i> Yes, Compare Anyway
                 </button>
             </div>
         </div>
@@ -1981,55 +2120,58 @@
 
     <!-- Side-by-Side Comparison Modal -->
     <div id="compareModal"
-        class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4 transition-all duration-200">
+        class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-2 sm:p-4 transition-all duration-200">
         <div id="compareModalDialog"
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700 transition-all duration-200">
-            <div class="p-4 bg-gray-900 dark:bg-slate-950 text-white flex flex-wrap justify-between items-center gap-3">
-                <div class="flex flex-wrap items-center gap-3">
-                    <h3 class="font-bold text-lg flex items-center gap-2">
-                        <i class="fa-solid fa-code-compare text-blue-400"></i>Product Comparison
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-6xl max-h-[92dvh] sm:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700 transition-all duration-200">
+            <div class="p-2.5 sm:p-4 bg-gray-900 dark:bg-slate-950 text-white flex flex-wrap justify-between items-center gap-2 sm:gap-3">
+                <div class="order-1 flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
+                    <h3 id="compareModalTitle" class="font-bold text-sm sm:text-lg flex items-center gap-1.5 sm:gap-2 truncate">
+                        <i class="fa-solid fa-code-compare text-blue-400" aria-hidden="true"></i>
+                        <span>Product Comparison</span>
                     </h3>
                     <button id="btnExportComparisonExcel" onclick="downloadComparisonExcel(this)"
-                        class="bg-green-600 hover:bg-green-500 disabled:opacity-60 disabled:cursor-wait text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition shadow-sm"
+                        class="bg-green-600 hover:bg-green-500 disabled:opacity-60 disabled:cursor-wait text-white text-xs font-bold px-2.5 sm:px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition shadow-sm whitespace-nowrap"
                         title="Export comparison table to Excel including attached table images">
-                        <i class="fa-solid fa-file-excel"></i> Export Excel
+                        <i class="fa-solid fa-file-excel" aria-hidden="true"></i>
+                        <span>Export Excel</span>
                     </button>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="order-3 sm:order-2 w-full sm:w-auto flex flex-wrap items-center justify-between sm:justify-end gap-1.5 sm:gap-2 sm:ms-auto">
                     <!-- Comparison Table Zoom Controls -->
                     <div class="flex items-center gap-1 bg-slate-800/90 border border-slate-700 rounded-lg p-1">
-                        <button type="button" onclick="adjustCompareTableZoom(-0.1)"
-                            class="hover:bg-slate-700 text-gray-200 hover:text-white rounded px-2 py-0.5 text-xs font-bold transition"
+                        <button type="button" onclick="adjustCompareTableZoom(-0.1)" aria-label="Zoom Out Table"
+                            class="hover:bg-slate-700 text-gray-200 hover:text-white rounded px-2 py-1 sm:py-0.5 text-xs font-bold transition"
                             title="Zoom Out Table">
-                            <i class="fa-solid fa-magnifying-glass-minus"></i>
+                            <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
                         </button>
                         <div class="inline-flex items-center bg-slate-900/90 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-semibold"
                             title="Type table zoom percentage (40% - 250%) and press Enter">
                             <input type="number" id="inputCompareTableZoom" min="40" max="250" step="10" value="100"
+                                aria-label="Comparison Table Zoom Percentage"
                                 onchange="handleCompareTableZoomInput(this)"
                                 onkeydown="if(event.key==='Enter'){this.blur(); event.preventDefault();}"
-                                class="w-11 bg-transparent text-white text-center font-bold text-xs outline-none appearance-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                                class="w-10 sm:w-11 bg-transparent text-white text-center font-bold text-xs outline-none appearance-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                             <span class="text-[11px] text-gray-400 select-none">%</span>
-                            <button type="button" onclick="resetCompareTableZoom()"
+                            <button type="button" onclick="resetCompareTableZoom()" aria-label="Reset Zoom to 100%"
                                 class="ms-1 pl-1 border-l border-slate-700 text-[10px] text-blue-400 hover:text-blue-300 transition"
                                 title="Reset Zoom to 100%">
-                                <i class="fa-solid fa-rotate-left"></i>
+                                <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
                             </button>
                         </div>
-                        <button type="button" onclick="adjustCompareTableZoom(0.1)"
-                            class="hover:bg-slate-700 text-gray-200 hover:text-white rounded px-2 py-0.5 text-xs font-bold transition"
+                        <button type="button" onclick="adjustCompareTableZoom(0.1)" aria-label="Zoom In Table"
+                            class="hover:bg-slate-700 text-gray-200 hover:text-white rounded px-2 py-1 sm:py-0.5 text-xs font-bold transition"
                             title="Zoom In Table">
-                            <i class="fa-solid fa-magnifying-glass-plus"></i>
+                            <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
                         </button>
                     </div>
 
                     <!-- Freeze Pane Controls (Syncs with Excel Export) -->
-                    <div class="flex items-center gap-1.5 bg-slate-800/90 border border-slate-700 rounded-lg px-2 py-1 text-xs"
+                    <div class="flex items-center gap-1 sm:gap-1.5 bg-slate-800/90 border border-slate-700 rounded-lg px-1.5 sm:px-2 py-1 text-xs"
                         title="Configure Freeze Pane for Comparison Table & Excel Export">
-                        <i class="fa-solid fa-snowflake text-cyan-400 text-[11px]"></i>
+                        <i class="fa-solid fa-snowflake text-cyan-400 text-[11px]" aria-hidden="true"></i>
                         <span class="text-[11px] text-gray-300 hidden xl:inline font-semibold">Freeze:</span>
-                        <select id="selectFreezeRows" onchange="onComparisonFreezeChange()"
-                            class="bg-slate-900 text-gray-100 border border-slate-600 rounded px-1.5 py-0.5 text-[11px] font-semibold outline-none cursor-pointer"
+                        <select id="selectFreezeRows" onchange="onComparisonFreezeChange()" aria-label="Number of top rows to freeze"
+                            class="bg-slate-900 text-gray-100 border border-slate-600 rounded px-1 sm:px-1.5 py-0.5 text-[11px] font-semibold outline-none cursor-pointer max-w-[76px] sm:max-w-none"
                             title="Number of top rows to freeze">
                             <option value="0">0 Rows</option>
                             <option value="2" selected>2 Rows (Header)</option>
@@ -2038,8 +2180,8 @@
                             <option value="5">5 Rows (+Channel)</option>
                             <option value="6">6 Rows (+Type)</option>
                         </select>
-                        <select id="selectFreezeCols" onchange="onComparisonFreezeChange()"
-                            class="bg-slate-900 text-gray-100 border border-slate-600 rounded px-1.5 py-0.5 text-[11px] font-semibold outline-none cursor-pointer"
+                        <select id="selectFreezeCols" onchange="onComparisonFreezeChange()" aria-label="Number of left columns to freeze"
+                            class="bg-slate-900 text-gray-100 border border-slate-600 rounded px-1 sm:px-1.5 py-0.5 text-[11px] font-semibold outline-none cursor-pointer max-w-[72px] sm:max-w-none"
                             title="Number of left columns to freeze">
                             <option value="0">0 Cols</option>
                             <option value="1" selected>1 Col (Feature)</option>
@@ -2050,53 +2192,55 @@
 
                     <!-- Enlarge / Fullscreen Button -->
                     <button type="button" id="btnEnlargeCompareModal" onclick="toggleEnlargeCompareModal()"
-                        class="bg-slate-800 hover:bg-slate-700 text-gray-200 hover:text-white border border-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
+                        aria-label="Enlarge or Restore Comparison Modal"
+                        class="bg-slate-800 hover:bg-slate-700 text-gray-200 hover:text-white border border-slate-700 text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
                         title="Enlarge / Fullscreen">
-                        <i id="iconEnlargeCompareModal" class="fa-solid fa-expand text-blue-400"></i>
+                        <i id="iconEnlargeCompareModal" class="fa-solid fa-expand text-blue-400" aria-hidden="true"></i>
                         <span id="textEnlargeCompareModal" class="hidden sm:inline">Enlarge</span>
                     </button>
-
-                    <button onclick="closeComparisonModal()"
-                        class="text-gray-400 hover:text-white text-xl ml-1 leading-none px-1.5">&times;</button>
                 </div>
+                <button onclick="closeComparisonModal()" aria-label="Close Comparison Modal"
+                    class="order-2 sm:order-3 w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-slate-800 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer"
+            <div class="p-2 sm:p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer"
+                tabindex="0" role="region" aria-labelledby="compareModalTitle"
                 onwheel="handleCompareTableWheel(event)"></div>
         </div>
     </div>
 
     <!-- Product Detail & Edit Modal -->
-    <div id="detailModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+    <div id="detailModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-blue-900 dark:bg-slate-900 text-white flex justify-between items-center gap-3">
-                <div class="flex items-center gap-2.5 min-w-0">
-                    <h3 id="detailTitle" class="font-bold text-lg truncate">Product Details</h3>
-                    <button id="btnDeleteSingleDetail"
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[90dvh] sm:max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            <div class="p-3 sm:p-4 bg-blue-900 dark:bg-slate-900 text-white flex justify-between items-center gap-2 sm:gap-3">
+                <div class="flex items-center gap-2 min-w-0">
+                    <h3 id="detailTitle" class="font-bold text-sm sm:text-lg truncate">Product Details</h3>
+                    <button id="btnDeleteSingleDetail" aria-label="Delete This Product"
                         onclick="if(currentActiveProduct) openDeleteConfirmModal([currentActiveProduct.id])"
-                        class="bg-red-600 hover:bg-red-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 shrink-0"
+                        class="modal-touch-btn bg-red-600 hover:bg-red-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition flex items-center justify-center gap-1 shrink-0"
                         title="Delete This Product">
-                        <i class="fa-solid fa-trash-can"></i>
+                        <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
                     </button>
                 </div>
-                <div class="flex items-center gap-2 shrink-0">
+                <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <button id="btnToggleEdit" onclick="toggleEditMode()"
-                        class="bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition flex items-center gap-1">
-                        <i class="fa-solid fa-pen-to-square"></i> Edit Product
+                        class="modal-touch-btn bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg transition flex items-center gap-1 whitespace-nowrap">
+                        <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                        <span>Edit Product</span>
                     </button>
-                    <button onclick="closeDetailModal()"
-                        class="text-gray-300 hover:text-white text-xl ml-1">&times;</button>
+                    <button onclick="closeDetailModal()" aria-label="Close Product Details"
+                        class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-300 hover:text-white hover:bg-blue-800 dark:hover:bg-slate-800 text-xl leading-none shrink-0">&times;</button>
                 </div>
             </div>
-            <div class="p-6 overflow-y-auto flex-1" id="detailBody"></div>
+            <div class="p-3 sm:p-6 overflow-y-auto flex-1" id="detailBody"></div>
             <!-- Edit Mode Save Footer -->
             <div id="detailEditFooter"
-                class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2 hidden">
+                class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2 hidden">
                 <button onclick="cancelEditMode()"
-                    class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                    class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
                 <button id="btnSaveProductEdit" onclick="saveProductEdit()"
-                    class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
-                    <i class="fa-solid fa-floppy-disk"></i> Save Changes
+                    class="modal-touch-btn px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Changes
                 </button>
             </div>
         </div>
@@ -2104,57 +2248,62 @@
 
     <!-- Image Lightbox Modal (Static Frame & Enlarge Like Comparison Table) -->
     <div id="imageLightboxModal" onclick="closeImageLightbox(event)"
-        class="fixed inset-0 bg-black/85 z-[70] hidden flex flex-col items-center justify-center p-4 backdrop-blur-sm transition-all duration-200">
+        class="fixed inset-0 bg-black/85 z-[70] hidden flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-sm transition-all duration-200">
         <div id="imageLightboxDialog" onclick="event.stopPropagation()"
-            class="relative w-full max-w-6xl h-[88vh] max-h-[90vh] flex flex-col bg-slate-900/95 border border-slate-700 rounded-2xl p-3 shadow-2xl overflow-hidden transition-all duration-200">
-            <div class="w-full flex flex-wrap justify-between items-center mb-2.5 px-1 gap-3 shrink-0">
-                <span class="text-white/90 text-xs font-semibold flex items-center gap-1.5">
-                    <i class="fa-solid fa-table text-blue-400"></i> Table Image Preview
+            class="relative w-full max-w-6xl h-[90dvh] sm:h-[88vh] max-h-[92dvh] sm:max-h-[90vh] flex flex-col bg-slate-900/95 border border-slate-700 rounded-2xl p-2.5 sm:p-3 shadow-2xl overflow-hidden transition-all duration-200">
+            <div class="w-full flex flex-wrap justify-between items-center mb-2 sm:mb-2.5 px-1 gap-2 sm:gap-3 shrink-0">
+                <span class="text-white/90 text-xs font-semibold flex items-center gap-1.5 truncate">
+                    <i class="fa-solid fa-table text-blue-400" aria-hidden="true"></i> Table Image Preview
                     <span id="imageLightboxDimInfo" class="text-[11px] text-gray-400 font-normal"></span>
                 </span>
-                <div class="flex flex-wrap items-center gap-1.5">
+                <div class="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-end">
                     <button type="button" id="btnCopyLightboxImage" onclick="copyCurrentLightboxImage(this)"
-                        class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-2.5 py-1 text-xs font-semibold transition flex items-center gap-1.5 shadow"
+                        class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-2.5 py-1.5 sm:py-1 text-xs font-semibold transition flex items-center gap-1.5 shadow"
                         title="Copy image to clipboard to paste directly into Excel / PowerPoint / Word / WhatsApp">
-                        <i class="fa-solid fa-copy"></i> Copy Image
+                        <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy Image
                     </button>
-                    <button type="button" onclick="adjustLightboxZoom(-0.25, event)"
-                        class="bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 rounded-lg px-2.5 py-1 text-xs font-bold transition"
-                        title="Zoom Out">
-                        <i class="fa-solid fa-magnifying-glass-minus"></i>
-                    </button>
-                    <div class="inline-flex items-center bg-blue-600/85 hover:bg-blue-600 text-white rounded-lg px-2 py-0.5 text-xs font-semibold transition shadow-sm border border-blue-400/40"
-                        title="Type zoom percentage (10% - 500%) and press Enter">
-                        <input type="number" id="inputLightboxZoom" min="10" max="500" step="5" value="100"
-                            onchange="handleLightboxZoomInput(this)"
-                            onkeydown="if(event.key==='Enter'){this.blur(); event.preventDefault();}"
-                            class="w-12 bg-transparent text-white text-center font-bold text-xs outline-none appearance-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                        <span class="text-[11px] opacity-90 select-none">%</span>
-                        <button type="button" id="btnToggleLightboxZoom" onclick="resetLightboxZoom(event)"
-                            class="ms-1.5 pl-1.5 border-l border-blue-300/40 text-[10px] text-blue-100 hover:text-white transition"
-                            title="Click to toggle between Fit to Frame &amp; 100% Original Size">
-                            <i class="fa-solid fa-rotate-left"></i>
+                    <div class="flex items-center gap-1">
+                        <button type="button" onclick="adjustLightboxZoom(-0.25, event)" aria-label="Zoom Out Image"
+                            class="bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs font-bold transition"
+                            title="Zoom Out">
+                            <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+                        </button>
+                        <div class="inline-flex items-center bg-blue-600/85 hover:bg-blue-600 text-white rounded-lg px-2 py-1 sm:py-0.5 text-xs font-semibold transition shadow-sm border border-blue-400/40"
+                            title="Type zoom percentage (10% - 500%) and press Enter">
+                            <input type="number" id="inputLightboxZoom" min="10" max="500" step="5" value="100"
+                                aria-label="Image Zoom Percentage"
+                                onchange="handleLightboxZoomInput(this)"
+                                onkeydown="if(event.key==='Enter'){this.blur(); event.preventDefault();}"
+                                class="w-11 sm:w-12 bg-transparent text-white text-center font-bold text-xs outline-none appearance-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                            <span class="text-[11px] opacity-90 select-none">%</span>
+                            <button type="button" id="btnToggleLightboxZoom" onclick="resetLightboxZoom(event)"
+                                aria-label="Reset Image Zoom"
+                                class="ms-1.5 pl-1.5 border-l border-blue-300/40 text-[10px] text-blue-100 hover:text-white transition"
+                                title="Click to toggle between Fit to Frame &amp; 100% Original Size">
+                                <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                        <button type="button" onclick="adjustLightboxZoom(0.25, event)" aria-label="Zoom In Image"
+                            class="bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs font-bold transition"
+                            title="Zoom In">
+                            <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
                         </button>
                     </div>
-                    <button type="button" onclick="adjustLightboxZoom(0.25, event)"
-                        class="bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 rounded-lg px-2.5 py-1 text-xs font-bold transition"
-                        title="Zoom In">
-                        <i class="fa-solid fa-magnifying-glass-plus"></i>
-                    </button>
                     <button type="button" id="btnEnlargeLightboxModal" onclick="toggleEnlargeLightboxModal(event)"
-                        class="bg-slate-800 hover:bg-slate-700 text-gray-200 hover:text-white border border-slate-600 rounded-lg px-2.5 py-1 text-xs font-semibold transition flex items-center gap-1.5"
+                        aria-label="Enlarge Image Preview"
+                        class="bg-slate-800 hover:bg-slate-700 text-gray-200 hover:text-white border border-slate-600 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs font-semibold transition flex items-center gap-1.5"
                         title="Enlarge / Fullscreen">
-                        <i id="iconEnlargeLightboxModal" class="fa-solid fa-expand text-blue-400"></i>
+                        <i id="iconEnlargeLightboxModal" class="fa-solid fa-expand text-blue-400" aria-hidden="true"></i>
                         <span id="textEnlargeLightboxModal" class="hidden sm:inline">Enlarge</span>
                     </button>
                     <button type="button" onclick="closeImageLightbox()"
-                        class="bg-red-600/80 hover:bg-red-500 text-white rounded-lg px-3 py-1 text-xs font-bold transition flex items-center gap-1.5 ms-1">
-                        <i class="fa-solid fa-xmark"></i> Close
+                        class="bg-red-600/80 hover:bg-red-500 text-white rounded-lg px-2.5 sm:px-3 py-1.5 sm:py-1 text-xs font-bold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-xmark" aria-hidden="true"></i> Close
                     </button>
                 </div>
             </div>
             <div id="imageLightboxViewport" onwheel="handleLightboxWheel(event)"
-                class="flex-1 w-full h-full overflow-auto bg-white rounded-xl p-3 shadow-inner border border-gray-300 flex justify-center items-start">
+                class="flex-1 w-full h-full overflow-auto bg-white rounded-xl p-2 sm:p-3 shadow-inner border border-gray-300 flex justify-center items-start">
                 <img id="imageLightboxTarget" src="" alt="Table Preview" class="block rounded select-none"
                     style="image-rendering: -webkit-optimize-contrast;">
             </div>
@@ -2163,18 +2312,18 @@
 
     <!-- Bulk Download Documents Confirmation Modal (.ZIP) -->
     <div id="bulkDownloadConfirmModal"
-        class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-emerald-700 text-white flex justify-between items-center">
-                <h3 class="font-bold text-base flex items-center gap-2">
-                    <i class="fa-solid fa-file-zipper text-lg"></i> Confirm Document Download (.ZIP)
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[90dvh] sm:max-h-[88vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            <div class="p-3 sm:p-4 bg-emerald-700 text-white flex justify-between items-center gap-2">
+                <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+                    <i class="fa-solid fa-file-zipper text-base sm:text-lg" aria-hidden="true"></i> Confirm Document Download (.ZIP)
                 </h3>
-                <button onclick="closeBulkDownloadModal()"
-                    class="text-gray-200 hover:text-white text-xl leading-none">&times;</button>
+                <button onclick="closeBulkDownloadModal()" aria-label="Close modal"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-200 hover:text-white hover:bg-emerald-800 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="p-5 overflow-y-auto flex-1 space-y-4">
-                <p class="text-sm text-gray-600 dark:text-gray-300">
+            <div class="p-3.5 sm:p-5 overflow-y-auto flex-1 space-y-4">
+                <p class="text-xs sm:text-sm text-gray-600 dark:text-gray-300">
                     Document files from the selected products will be downloaded and neatly organized into their
                     respective product folders inside a single <strong>.ZIP</strong> archive.
                 </p>
@@ -2194,32 +2343,33 @@
                     </div>
                 </div>
             </div>
-            <div class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                 <button type="button" onclick="closeBulkDownloadModal()" id="btnCancelBulkDownload"
-                    class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                    class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
                 <button type="button" id="btnStartBulkDownload" onclick="executeBulkDownloadZip()"
-                    class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
-                    <i class="fa-solid fa-download"></i> Download ZIP Now
+                    class="modal-touch-btn px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-download" aria-hidden="true"></i> Download ZIP Now
                 </button>
             </div>
         </div>
     </div>
 
     <!-- Bulk Document Upload Modal to Google Drive -->
-    <div id="bulkDocUploadModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+    <div id="bulkDocUploadModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-indigo-700 text-white flex justify-between items-center">
-                <h3 class="font-bold text-base flex items-center gap-2">
-                    <i class="fa-solid fa-folder-plus text-lg"></i> Upload Product Documents (Bulk Google Drive)
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-2xl max-h-[92dvh] sm:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
+            <div class="p-3 sm:p-4 bg-indigo-700 text-white flex justify-between items-center gap-2">
+                <h3 class="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0 truncate">
+                    <i class="fa-solid fa-folder-plus text-base sm:text-lg shrink-0" aria-hidden="true"></i>
+                    <span class="truncate">Upload Product Documents (Bulk Google Drive)</span>
                 </h3>
-                <button onclick="closeBulkDocUploadModal()"
-                    class="text-gray-200 hover:text-white text-xl leading-none">&times;</button>
+                <button onclick="closeBulkDocUploadModal()" aria-label="Close modal"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-200 hover:text-white hover:bg-indigo-800 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="p-5 overflow-y-auto flex-1 space-y-4">
+            <div class="p-3.5 sm:p-5 overflow-y-auto flex-1 space-y-4">
                 <div
                     class="text-xs bg-indigo-50 dark:bg-indigo-950/40 p-3 rounded-xl border border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200 space-y-1">
-                    <p class="font-bold flex items-center gap-1.5"><i class="fa-solid fa-circle-info"></i> Automatic
+                    <p class="font-bold flex items-center gap-1.5"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Automatic
                         Naming Instructions:</p>
                     <p>File name format: <code
                             class="bg-white/80 dark:bg-slate-800 px-1 py-0.5 rounded font-mono font-bold">[Product Name]_[Document Name].[ext]</code>
@@ -2230,12 +2380,12 @@
                 </div>
 
                 <div id="bulkDocDropzone"
-                    class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-2xl p-6 text-center hover:border-indigo-500 dark:hover:border-indigo-400 transition cursor-pointer bg-gray-50 dark:bg-gray-700/30"
+                    class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-2xl p-4 sm:p-6 text-center hover:border-indigo-500 dark:hover:border-indigo-400 transition cursor-pointer bg-gray-50 dark:bg-gray-700/30"
                     onclick="document.getElementById('bulkDocFileInput').click()"
                     ondragenter="handleBulkDocDragOver(event)" ondragover="handleBulkDocDragOver(event)"
                     ondragleave="handleBulkDocDragLeave(event)" ondrop="handleBulkDocDrop(event)">
-                    <i class="fa-solid fa-cloud-arrow-up text-4xl text-indigo-500 mb-2 pointer-events-none"></i>
-                    <p class="text-sm font-semibold text-gray-700 dark:text-gray-200 pointer-events-none">Click or Drag
+                    <i class="fa-solid fa-cloud-arrow-up text-3xl sm:text-4xl text-indigo-500 mb-2 pointer-events-none" aria-hidden="true"></i>
+                    <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200 pointer-events-none">Click or Drag
                         &amp; Drop Multiple Files Here</p>
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 pointer-events-none">Select or drop 1 or
                         more documents at once</p>
@@ -2267,12 +2417,12 @@
                     </div>
                 </div>
             </div>
-            <div class="p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                 <button type="button" onclick="closeBulkDocUploadModal()" id="btnCancelBulkDocUpload"
-                    class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Close</button>
+                    class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Close</button>
                 <button type="button" id="btnSubmitBulkDocUpload" onclick="startBulkDocUploadToDrive()" disabled
-                    class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
-                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Drive
+                    class="modal-touch-btn px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i> Upload to Google Drive
                 </button>
             </div>
         </div>
@@ -2280,19 +2430,19 @@
 
     <!-- In-App Document Viewer Modal (Preview PDF, Office Docs/PPT via PDF, Excel, & Images in Web) -->
     <div id="inlineDocViewerModal"
-        class="fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden flex items-center justify-center p-2 sm:p-4 transition-opacity">
+        class="fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden flex items-center justify-center p-1.5 sm:p-4 transition-opacity">
         <div
-            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-5xl h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 animate-fadeIn">
+            class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-5xl h-[94dvh] sm:h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 animate-fadeIn">
             <!-- Modal Header -->
             <div
-                class="px-4 py-3 bg-slate-900 text-white flex justify-between items-center border-b border-slate-700 shrink-0">
-                <div class="flex items-center gap-2.5 min-w-0 pr-3">
+                class="px-3 py-2.5 sm:px-4 sm:py-3 bg-slate-900 text-white flex justify-between items-center border-b border-slate-700 shrink-0">
+                <div class="flex items-center gap-2 sm:gap-2.5 min-w-0 pr-2 sm:pr-3">
                     <div id="inlineDocViewerIcon"
                         class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-blue-500/20 text-blue-400 border border-blue-500/30 text-sm">
-                        <i class="fa-solid fa-file-pdf"></i>
+                        <i class="fa-solid fa-file-pdf" aria-hidden="true"></i>
                     </div>
                     <div class="min-w-0">
-                        <div id="inlineDocViewerTitle" class="font-bold text-sm text-gray-100 truncate"
+                        <div id="inlineDocViewerTitle" class="font-bold text-xs sm:text-sm text-gray-100 truncate"
                             title="Document Name">Loading Document...</div>
                         <div class="flex items-center gap-2 text-[11px] text-gray-400">
                             <span id="inlineDocViewerBadge"
@@ -2302,14 +2452,15 @@
                         </div>
                     </div>
                 </div>
-                <div class="flex items-center gap-2 shrink-0">
+                <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <button type="button" id="inlineDocViewerDownloadBtn" onclick="handleInlineDocViewerDownload(this)"
-                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition flex items-center gap-1.5 shadow-sm"
+                        aria-label="Download Original File Directly"
+                        class="modal-touch-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition flex items-center gap-1.5 shadow-sm"
                         title="Download Original File Directly">
-                        <i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Download File</span>
+                        <i class="fa-solid fa-download" aria-hidden="true"></i> <span class="hidden sm:inline">Download File</span>
                     </button>
-                    <button type="button" onclick="closeInlineDocViewer()"
-                        class="w-8 h-8 rounded-lg text-gray-300 hover:text-white hover:bg-slate-800 flex items-center justify-center text-xl transition leading-none"
+                    <button type="button" onclick="closeInlineDocViewer()" aria-label="Close Preview"
+                        class="w-9 h-9 rounded-lg text-gray-300 hover:text-white hover:bg-slate-800 flex items-center justify-center text-xl transition leading-none"
                         title="Close Preview">
                         &times;
                     </button>
@@ -2329,23 +2480,23 @@
 
                 <!-- Error State -->
                 <div id="inlineDocViewerError"
-                    class="hidden absolute inset-0 bg-white dark:bg-gray-900 flex flex-col items-center justify-center z-10 p-6 text-center">
+                    class="hidden absolute inset-0 bg-white dark:bg-gray-900 flex flex-col items-center justify-center z-10 p-4 sm:p-6 text-center">
                     <div
                         class="w-16 h-16 rounded-full bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400 flex items-center justify-center text-2xl mb-3">
-                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
                     </div>
                     <h4 class="font-bold text-base text-gray-800 dark:text-gray-100 mb-1">Failed to Display Preview
                     </h4>
                     <p id="inlineDocViewerErrorMsg" class="text-xs text-gray-600 dark:text-gray-300 max-w-md mb-4">
                         Document could not be loaded directly.</p>
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center justify-center gap-2">
                         <button type="button" id="inlineDocViewerFallbackDownload"
                             onclick="handleInlineDocViewerDownload(this)"
-                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
-                            <i class="fa-solid fa-download"></i> Download File Directly
+                            class="modal-touch-btn px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow">
+                            <i class="fa-solid fa-download" aria-hidden="true"></i> Download File Directly
                         </button>
                         <button type="button" onclick="closeInlineDocViewer()"
-                            class="px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                            class="modal-touch-btn px-4 py-2 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
                             Close
                         </button>
                     </div>
@@ -2353,42 +2504,42 @@
 
                 <!-- Content Frame for PDF / Images / HTML -->
                 <div id="inlineDocViewerContent"
-                    class="w-full h-full flex-1 overflow-auto flex items-center justify-center p-2"></div>
+                    class="w-full h-full flex-1 overflow-auto flex items-center justify-center p-1.5 sm:p-2"></div>
             </div>
         </div>
     </div>
 
     <!-- Single Doc Upload Modal (From Product Detail Modal) -->
-    <div id="singleDocUploadModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">
+    <div id="singleDocUploadModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-2.5 sm:p-4">
         <div
             class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-gray-700">
-            <div class="p-4 bg-blue-800 text-white flex justify-between items-center">
+            <div class="p-3 sm:p-4 bg-blue-800 text-white flex justify-between items-center gap-2">
                 <h3 class="font-bold text-sm flex items-center gap-2">
-                    <i class="fa-solid fa-file-arrow-up"></i> Upload Product Document
+                    <i class="fa-solid fa-file-arrow-up" aria-hidden="true"></i> Upload Product Document
                 </h3>
-                <button onclick="closeSingleDocUploadModal()"
-                    class="text-gray-200 hover:text-white text-xl leading-none">&times;</button>
+                <button onclick="closeSingleDocUploadModal()" aria-label="Close modal"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-200 hover:text-white hover:bg-blue-900 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="p-4 space-y-3 text-xs">
+            <div class="p-3.5 sm:p-4 space-y-3 text-xs">
                 <div>
                     <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Product Name:</label>
                     <input type="text" id="singleDocTargetProdName" readonly
-                        class="w-full bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg p-2 font-semibold border dark:border-gray-600 outline-none">
+                        class="w-full bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg p-2.5 sm:p-2 font-semibold border dark:border-gray-600 outline-none">
                 </div>
                 <div>
                     <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Select File (All Formats
                         Allowed):</label>
                     <input type="file" id="singleDocFileInput" onchange="handleSingleDocFileChange(this)"
-                        class="w-full text-xs text-gray-700 dark:text-gray-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        class="w-full text-xs text-gray-700 dark:text-gray-300 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
                 </div>
                 <div id="singleDocUploadStatus" class="hidden p-2 rounded-lg text-[11px] font-medium"></div>
             </div>
             <div class="p-3 bg-gray-50 dark:bg-gray-900/60 border-t dark:border-gray-700 flex justify-end gap-2">
                 <button type="button" onclick="closeSingleDocUploadModal()"
-                    class="px-3 py-1.5 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300">Cancel</button>
+                    class="modal-touch-btn px-3.5 py-2 sm:py-1.5 border dark:border-gray-600 rounded-lg text-xs font-semibold text-gray-600 dark:text-gray-300">Cancel</button>
                 <button type="button" id="btnSubmitSingleDoc" onclick="submitSingleDocUpload()"
-                    class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
-                    <i class="fa-solid fa-upload"></i> Upload
+                    class="modal-touch-btn px-4 py-2 sm:py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-upload" aria-hidden="true"></i> Upload
                 </button>
             </div>
         </div>
@@ -3420,7 +3571,10 @@
             if (event) event.stopPropagation();
             const menuId = "addFilterDropdown";
             document.querySelectorAll('.dropdown-content').forEach(el => {
-                if (el.id !== menuId) el.classList.add('hidden');
+                if (el.id !== menuId) {
+                    el.classList.add('hidden');
+                    resetDropdownPositionStyles(el);
+                }
             });
             const menu = document.getElementById(menuId);
             if (!menu) return;
@@ -3428,14 +3582,17 @@
             if (willOpen) {
                 renderAddFilterMenu();
                 menu.classList.remove('hidden');
+                positionDropdownInViewport(menu);
                 if (!isFullProductDataLoaded) {
                     await ensureFullProductDataLoaded();
                     if (!menu.classList.contains('hidden')) {
                         renderAddFilterMenu();
+                        positionDropdownInViewport(menu);
                     }
                 }
             } else {
                 menu.classList.add('hidden');
+                resetDropdownPositionStyles(menu);
             }
         }
 
@@ -3541,25 +3698,104 @@
             renderAddFilterMenu();
         }
 
-        // --- DROPDOWN MULTI-SELECT ---
+        // --- DROPDOWN MULTI-SELECT & MOBILE COLLAPSIBLE FILTER PANEL ---
+        function resetDropdownPositionStyles(el) {
+            if (!el) return;
+            el.style.top = "";
+            el.style.bottom = "";
+            el.style.left = "";
+            el.style.right = "";
+        }
+
+        function positionDropdownInViewport(dropdownEl) {
+            if (!dropdownEl || dropdownEl.classList.contains('hidden')) return;
+            resetDropdownPositionStyles(dropdownEl);
+
+            const triggerWrapper = dropdownEl.closest('.custom-select');
+            const triggerBtn = triggerWrapper ? triggerWrapper.querySelector('button') : null;
+            if (!triggerBtn) return;
+
+            const vw = window.innerWidth || document.documentElement.clientWidth;
+            const vh = window.innerHeight || document.documentElement.clientHeight;
+            const btnRect = triggerBtn.getBoundingClientRect();
+
+            // Smartphone (< 640px): CSS sets position: fixed and inset-inline: 0.75rem; calculate vertical placement
+            if (vw < 640) {
+                const dropHeight = Math.min(dropdownEl.scrollHeight || 260, Math.round(vh * 0.56), 304);
+                const spaceBelow = vh - btnRect.bottom - 12;
+                const spaceAbove = btnRect.top - 12;
+                if (spaceBelow < 180 && spaceAbove > spaceBelow) {
+                    const topPos = Math.max(12, btnRect.top - dropHeight - 6);
+                    dropdownEl.style.top = `${Math.round(topPos)}px`;
+                } else {
+                    dropdownEl.style.top = `${Math.round(btnRect.bottom + 6)}px`;
+                }
+                return;
+            }
+
+            // Desktop / Tablet (>= 640px): prevent left/right viewport clipping
+            const dropRect = dropdownEl.getBoundingClientRect();
+            if (dropRect.left < 8) {
+                dropdownEl.style.left = "0px";
+                dropdownEl.style.right = "auto";
+            } else if (dropRect.right > vw - 8) {
+                dropdownEl.style.right = "0px";
+                dropdownEl.style.left = "auto";
+            }
+        }
+
+        function toggleMobileFilterPanel(event) {
+            if (event) event.stopPropagation();
+            const container = document.getElementById("filterContainer");
+            const btn = document.getElementById("btnMobileFilterToggle");
+            const chevron = document.getElementById("mobileFilterChevron");
+            if (!container) return;
+
+            const isCollapsed = container.classList.toggle("mobile-filters-collapsed");
+            const isExpanded = !isCollapsed;
+            if (btn) btn.setAttribute("aria-expanded", String(isExpanded));
+            if (chevron) chevron.classList.toggle("rotate-180", isExpanded);
+            if (!isExpanded) closeAllDropdowns();
+        }
+
         function closeAllDropdowns() {
-            document.querySelectorAll('.dropdown-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.dropdown-content').forEach(el => {
+                el.classList.add('hidden');
+                resetDropdownPositionStyles(el);
+            });
         }
 
         function toggleDropdown(id, event) {
             if (event) event.stopPropagation();
             document.querySelectorAll('.dropdown-content').forEach(el => {
-                if (el.id !== id) el.classList.add('hidden');
+                if (el.id !== id) {
+                    el.classList.add('hidden');
+                    resetDropdownPositionStyles(el);
+                }
             });
             const target = document.getElementById(id);
-            if (target) target.classList.toggle('hidden');
+            if (target) {
+                target.classList.toggle('hidden');
+                if (!target.classList.contains('hidden')) {
+                    positionDropdownInViewport(target);
+                } else {
+                    resetDropdownPositionStyles(target);
+                }
+            }
         }
 
         document.addEventListener('click', (e) => {
             if (!e.target.closest('.custom-select')) {
-                document.querySelectorAll('.dropdown-content').forEach(el => el.classList.add('hidden'));
+                closeAllDropdowns();
             }
         });
+
+        window.addEventListener('scroll', () => {
+            if (window.innerWidth < 640) {
+                const openDrop = document.querySelector('#filterStickyWrapper .dropdown-content:not(.hidden)');
+                if (openDrop) positionDropdownInViewport(openDrop);
+            }
+        }, { passive: true });
 
         // Event Keyboard Shortcut (Esc untuk tutup modal, Ctrl+C untuk salin gambar saat preview)
         document.addEventListener('keydown', (e) => {
@@ -3644,11 +3880,25 @@
 
         function updateResetAllFiltersVisibility() {
             const btn = document.getElementById("btnResetAllFilters");
-            if (!btn) return;
             const searchVal = (document.getElementById("searchInput")?.value || "").trim();
-            const hasActive = Boolean(searchVal) || Object.values(activeFilters).some(arr => Array.isArray(arr) && arr.length > 0);
-            btn.classList.toggle("hidden", !hasActive);
-            btn.classList.toggle("flex", hasActive);
+            const activeGroupCount = Object.values(activeFilters).filter(arr => Array.isArray(arr) && arr.length > 0).length;
+            const hasActive = Boolean(searchVal) || activeGroupCount > 0;
+            if (btn) {
+                btn.classList.toggle("hidden", !hasActive);
+                btn.classList.toggle("flex", hasActive);
+            }
+
+            const mobileBadge = document.getElementById("mobileActiveFilterBadge");
+            const mobileBtn = document.getElementById("btnMobileFilterToggle");
+            const badgeCount = activeGroupCount + (currentSortOption !== "default" ? 1 : 0);
+            if (mobileBadge) {
+                mobileBadge.textContent = String(badgeCount);
+                mobileBadge.classList.toggle("hidden", badgeCount === 0);
+            }
+            if (mobileBtn) {
+                mobileBtn.classList.toggle("ring-2", badgeCount > 0);
+                mobileBtn.classList.toggle("ring-blue-400", badgeCount > 0);
+            }
         }
 
         function updateFilterButtonText(key) {
@@ -3679,14 +3929,26 @@
         }
 
         // Sinkronisasi posisi top sticky filter wrapper agar menempel pas di bawah header navbar
+        let headerResizeObserverInitialized = false;
         function updateStickyFilterPosition() {
             const header = document.getElementById("mainHeader");
             const filterWrapper = document.getElementById("filterStickyWrapper");
             if (header && filterWrapper) {
                 filterWrapper.style.top = `${header.offsetHeight}px`;
+                if (!headerResizeObserverInitialized && typeof ResizeObserver !== "undefined") {
+                    headerResizeObserverInitialized = true;
+                    const ro = new ResizeObserver(() => {
+                        filterWrapper.style.top = `${header.offsetHeight}px`;
+                    });
+                    ro.observe(header);
+                }
             }
         }
-        window.addEventListener("resize", updateStickyFilterPosition);
+        window.addEventListener("resize", () => {
+            updateStickyFilterPosition();
+            const openDrop = document.querySelector('#filterStickyWrapper .dropdown-content:not(.hidden)');
+            if (openDrop) positionDropdownInViewport(openDrop);
+        });
 
         function buildDropdownUI(filterKey, optionsArray) {
             const container = document.getElementById(getDropdownDomId(filterKey));
@@ -5112,11 +5374,11 @@
                 const allVisibleSelected = currentlyVisibleProducts.length > 0 &&
                     currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
                 if (allVisibleSelected) {
-                    btnSelectAll.innerHTML = `<i class="fa-solid fa-xmark me-1"></i> Deselect All`;
-                    btnSelectAll.className = "text-xs md:text-sm bg-amber-600/90 hover:bg-amber-600 px-3 py-1.5 rounded-lg transition text-white font-medium border border-amber-400/50";
+                    btnSelectAll.innerHTML = `<i class="fa-solid fa-xmark me-1" aria-hidden="true"></i> Deselect All`;
+                    btnSelectAll.className = "col-span-2 sm:col-auto justify-self-end sm:justify-self-auto text-[11px] sm:text-xs md:text-sm bg-amber-600/90 hover:bg-amber-600 px-2 sm:px-3 py-1.5 rounded-lg transition text-white font-medium border border-amber-400/50 whitespace-nowrap";
                 } else {
-                    btnSelectAll.innerHTML = `<i class="fa-solid fa-check-double me-1"></i> Select All`;
-                    btnSelectAll.className = "text-xs md:text-sm bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg transition text-gray-200 font-medium border border-gray-600";
+                    btnSelectAll.innerHTML = `<i class="fa-solid fa-check-double me-1" aria-hidden="true"></i> Select All`;
+                    btnSelectAll.className = "col-span-2 sm:col-auto justify-self-end sm:justify-self-auto text-[11px] sm:text-xs md:text-sm bg-gray-700 hover:bg-gray-600 px-2 sm:px-3 py-1.5 rounded-lg transition text-gray-200 font-medium border border-gray-600 whitespace-nowrap";
                 }
             }
         }
@@ -5246,21 +5508,21 @@
 
             isCompareModalEnlarged = !isCompareModalEnlarged;
             if (isCompareModalEnlarged) {
-                modal.classList.remove("p-4", "md:p-6");
+                modal.classList.remove("p-2", "sm:p-4", "p-4", "md:p-6");
                 modal.classList.add("p-0");
-                dialog.classList.remove("max-w-7xl", "max-h-[90vh]", "rounded-2xl");
-                dialog.classList.add("w-screen", "h-screen", "max-w-none", "max-h-screen", "rounded-none");
+                dialog.classList.remove("max-w-6xl", "max-w-7xl", "max-h-[92dvh]", "sm:max-h-[90vh]", "max-h-[90vh]", "rounded-2xl");
+                dialog.classList.add("w-screen", "h-[100dvh]", "max-w-none", "max-h-[100dvh]", "rounded-none");
                 if (btn) {
-                    btn.innerHTML = `<i class="fa-solid fa-compress"></i> <span class="hidden lg:inline">Restore</span>`;
+                    btn.innerHTML = `<i class="fa-solid fa-compress text-amber-400" aria-hidden="true"></i> <span class="hidden sm:inline">Restore</span>`;
                     btn.title = "Restore Normal Size";
                 }
             } else {
                 modal.classList.remove("p-0");
-                modal.classList.add("p-4", "md:p-6");
-                dialog.classList.remove("w-screen", "h-screen", "max-w-none", "max-h-screen", "rounded-none");
-                dialog.classList.add("max-w-7xl", "max-h-[90vh]", "rounded-2xl");
+                modal.classList.add("p-2", "sm:p-4");
+                dialog.classList.remove("w-screen", "h-[100dvh]", "h-screen", "max-w-none", "max-h-[100dvh]", "max-h-screen", "rounded-none");
+                dialog.classList.add("max-w-6xl", "max-h-[92dvh]", "sm:max-h-[90vh]", "rounded-2xl");
                 if (btn) {
-                    btn.innerHTML = `<i class="fa-solid fa-expand"></i> <span class="hidden lg:inline">Enlarge</span>`;
+                    btn.innerHTML = `<i class="fa-solid fa-expand text-blue-400" aria-hidden="true"></i> <span class="hidden sm:inline">Enlarge</span>`;
                     btn.title = "Enlarge / Restore Comparison Table Screen";
                 }
             }
@@ -5521,27 +5783,26 @@
             });
 
             const prodCount = currentComparisonProducts.length;
-            const minTableWidthPx = 220 + prodCount * 260;
 
             container.innerHTML = `
-                <table class="w-full table-fixed text-sm text-left border-collapse" style="min-width: ${minTableWidthPx}px;" id="comparisonTable">
+                <table class="w-full table-fixed text-xs sm:text-sm text-left border-collapse" style="min-width: calc(var(--cmp-feature-col-w, 220px) + ${prodCount} * var(--cmp-prod-col-min-w, 260px));" id="comparisonTable">
                     <colgroup>
-                        <col style="width: 220px;" />
-                        ${currentComparisonProducts.map(() => `<col style="width: calc((100% - 220px) / ${prodCount});" />`).join('')}
+                        <col style="width: var(--cmp-feature-col-w, 220px);" />
+                        ${currentComparisonProducts.map(() => `<col style="width: calc((100% - var(--cmp-feature-col-w, 220px)) / ${prodCount});" />`).join('')}
                     </colgroup>
                     <thead>
                         <tr class="bg-gray-100 dark:bg-gray-700 border-b dark:border-gray-600">
-                            <th class="p-3 font-semibold text-gray-700 dark:text-gray-200 w-[220px] bg-gray-100 dark:bg-gray-700 break-words">Company Name</th>
+                            <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Company Name</th>
                             ${currentComparisonProducts.map(p => `
-                                <th class="p-3 font-semibold text-blue-700 dark:text-blue-300 border-l dark:border-gray-600 bg-gray-100 dark:bg-gray-700 break-words">
+                                <th scope="col" class="p-2 sm:p-3 font-semibold text-blue-700 dark:text-blue-300 border-l dark:border-gray-600 bg-gray-100 dark:bg-gray-700 break-words">
                                     ${p.company}
                                 </th>
                             `).join('')}
                         </tr>
                         <tr class="bg-gray-100 dark:bg-gray-700 border-b-2 dark:border-gray-600">
-                            <th class="p-3 font-semibold text-gray-700 dark:text-gray-200 w-[220px] bg-gray-100 dark:bg-gray-700 break-words">Product Name</th>
+                            <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Product Name</th>
                             ${currentComparisonProducts.map(p => `
-                                <th class="p-3 font-bold text-blue-900 dark:text-blue-100 border-l dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-base break-words">
+                                <th scope="col" class="p-2 sm:p-3 font-bold text-blue-900 dark:text-blue-100 border-l dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-sm sm:text-base break-words">
                                     ${p.name}
                                 </th>
                             `).join('')}
@@ -5561,10 +5822,10 @@
                         : "bg-blue-50 dark:bg-slate-900";
                     return `
                                 <tr class="${secBg}">
-                                    <td class="p-3 font-extrabold ${secText} uppercase tracking-wider text-xs break-words">
+                                    <td class="p-2 sm:p-3 font-extrabold ${secText} uppercase tracking-wider text-[11px] sm:text-xs break-words">
                                         ${feat.label}
                                     </td>
-                                    ${currentComparisonProducts.map(() => `<td class="p-3 border-l dark:border-gray-800 ${secCellBg}"></td>`).join('')}
+                                    ${currentComparisonProducts.map(() => `<td class="p-2 sm:p-3 border-l dark:border-gray-800 ${secCellBg}"></td>`).join('')}
                                 </tr>
                     `;
                 }
@@ -5582,7 +5843,7 @@
 
                 return `
                                 <tr>
-                                    <td class="p-3 align-middle break-words ${rowBgClass}">${feat.label}</td>
+                                    <td class="p-2 sm:p-3 align-middle break-words ${rowBgClass}">${feat.label}</td>
                                     ${currentComparisonProducts.map(p => {
                     let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
                     const renderedVal = formatListText(val);
@@ -5590,7 +5851,7 @@
                     const alignClass = isDashEmpty
                         ? "text-center align-middle font-semibold text-gray-400 dark:text-gray-500"
                         : "align-middle";
-                    return `<td class="p-3 border-l dark:border-gray-700 break-words ${cellBgClass} ${alignClass}">${renderedVal}</td>`;
+                    return `<td class="p-2 sm:p-3 border-l dark:border-gray-700 break-words ${cellBgClass} ${alignClass}">${renderedVal}</td>`;
                 }).join('')}
                                 </tr>
                             `;
@@ -7340,7 +7601,7 @@
                                 : (sp.name.toLowerCase() === "surplus underwriting" ? "Underwriting Surplus (Surplus Underwriting)" : sp.name));
                             return `
                                 <div class="field-with-images-wrapper">
-                                    <div class="flex justify-between items-center mb-1">
+                                    <div class="flex flex-wrap justify-between items-center gap-1.5 mb-1">
                                         <label class="block font-bold text-gray-700 dark:text-gray-300">${escapeHtmlAttr(lbl)}</label>
                                         ${showImgs ? `
                                             <div class="flex items-center gap-1.5">
@@ -7497,7 +7758,7 @@
                                     const cSplit = splitTextAndImages(productObj.attributes[col] || "");
                                     return `
                                         <div class="existing-charge-row field-with-images-wrapper p-3 bg-amber-50/40 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/70 rounded-lg" data-col-name="${escapeHtmlAttr(col)}">
-                                            <div class="flex justify-between items-center mb-1.5 gap-2">
+                                            <div class="flex flex-wrap justify-between items-center mb-1.5 gap-1.5">
                                                 <label class="font-bold text-amber-900 dark:text-amber-200">${escapeHtmlAttr(col)}</label>
                                                 <div class="flex items-center gap-1.5">
                                                     <button type="button" onclick="handlePasteImageFromClipboardBtn(this)" class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/50 dark:hover:bg-amber-800/60 px-2 py-0.5 rounded-md transition"><i class="fa-solid fa-paste"></i> Paste</button>
@@ -7544,7 +7805,7 @@
                                 const benSplit = splitTextAndImages(productObj.attributes[col] || "");
                                 return `
                                     <div class="existing-benefit-row field-with-images-wrapper p-3 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-700 rounded-lg" data-col-name="${escapeHtmlAttr(col)}">
-                                        <div class="flex justify-between items-center mb-1.5 gap-2">
+                                        <div class="flex flex-wrap justify-between items-center mb-1.5 gap-1.5">
                                             <label class="font-bold text-gray-800 dark:text-gray-200">${escapeHtmlAttr(col)}</label>
                                             <div class="flex items-center gap-1.5">
                                                 <button type="button" onclick="handlePasteImageFromClipboardBtn(this)" class="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/50 dark:hover:bg-blue-800/60 px-2 py-0.5 rounded-md transition"><i class="fa-solid fa-paste"></i> Paste</button>
@@ -7597,7 +7858,7 @@
                                 const sSplit = splitTextAndImages(productObj.attributes[col] || "");
                                 return `
                                     <div class="existing-section-row field-with-images-wrapper p-3 bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800/70 rounded-lg" data-col-name="${escapeHtmlAttr(col)}">
-                                        <div class="flex justify-between items-center mb-1.5 gap-2">
+                                        <div class="flex flex-wrap justify-between items-center mb-1.5 gap-1.5">
                                             <label class="font-bold text-indigo-900 dark:text-indigo-200">${escapeHtmlAttr(col)}</label>
                                             <div class="flex items-center gap-1.5">
                                                 <button type="button" onclick="handlePasteImageFromClipboardBtn(this)" class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:hover:bg-indigo-800/60 px-2 py-0.5 rounded-md transition"><i class="fa-solid fa-paste"></i> Paste</button>
@@ -7642,7 +7903,7 @@
                             const nbSplit = getFieldState(col);
                             return `
                                 <div class="existing-nonbenefit-row field-with-images-wrapper p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg" data-col-name="${escapeHtmlAttr(col)}">
-                                    <div class="flex justify-between items-center mb-1.5 gap-2">
+                                    <div class="flex flex-wrap justify-between items-center mb-1.5 gap-1.5">
                                         <label class="font-bold text-slate-800 dark:text-slate-200">${escapeHtmlAttr(col)}</label>
                                         <div class="flex items-center gap-1.5">
                                             <button type="button" onclick="handlePasteImageFromClipboardBtn(this)" class="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 px-2 py-0.5 rounded-md transition"><i class="fa-solid fa-paste"></i> Paste</button>
@@ -7669,7 +7930,7 @@
                 <!-- SECTION 4: ADDITIONAL BENEFIT -->
                 <hr class="my-3 dark:border-gray-700">
                 <div class="field-with-images-wrapper">
-                    <div class="flex justify-between items-center mb-1">
+                    <div class="flex flex-wrap justify-between items-center gap-1.5 mb-1">
                         <label class="block font-bold text-blue-900 dark:text-blue-300 text-sm">Additional / Other Benefit</label>
                         <div class="flex items-center gap-1.5">
                             <button type="button" onclick="handlePasteImageFromClipboardBtn(this)" class="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/50 dark:hover:bg-blue-800/60 px-2 py-0.5 rounded-md transition" title="Paste image">
@@ -7956,16 +8217,16 @@
             const safeName = p.name.replace(/'/g, "\\'");
             return `
                 <div class="pt-4 mt-4 border-t border-gray-200 dark:border-gray-700" id="detailDocumentsSection">
-                    <div class="flex justify-between items-center mb-3">
-                        <h4 class="font-bold text-gray-800 dark:text-gray-200 text-base flex items-center gap-2">
-                            <i class="fa-solid fa-folder-open text-blue-600 dark:text-blue-400"></i> Product Documents
+                    <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+                        <h4 class="font-bold text-gray-800 dark:text-gray-200 text-sm sm:text-base flex items-center gap-2">
+                            <i class="fa-solid fa-folder-open text-blue-600 dark:text-blue-400" aria-hidden="true"></i> Product Documents
                             <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 font-semibold">
                                 ${!isDocumentsLoaded ? `<i class="fa-solid fa-spinner fa-spin me-1"></i>Loading...` : `${pDocs.length} file${pDocs.length === 1 ? '' : 's'}`}
                             </span>
                         </h4>
                         <button type="button" onclick="openSingleDocUploadModal('${safeName}')"
-                            class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition flex items-center gap-1.5 shadow-sm">
-                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload Document
+                            class="modal-touch-btn text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition flex items-center gap-1.5 shadow-sm">
+                            <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i> Upload Document
                         </button>
                     </div>
                     ${!isDocumentsLoaded ? `
@@ -7986,12 +8247,12 @@
                 if (doc.fileSize) metaParts.push(`<span>${formatFileSize(doc.fileSize)}</span>`);
                 if (doc.uploadDate) metaParts.push(`<span>${doc.uploadDate.split(' ')[0]}</span>`);
                 return `
-                                    <div class="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-200 dark:border-gray-600 hover:border-blue-400 transition">
-                                        <div class="flex items-center gap-2.5 min-w-0 pr-2">
+                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-200 dark:border-gray-600 hover:border-blue-400 transition">
+                                        <div class="flex items-center gap-2.5 min-w-0">
                                             <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${fileInfo.color}">
-                                                <i class="fa-solid ${fileInfo.icon} text-sm"></i>
+                                                <i class="fa-solid ${fileInfo.icon} text-sm" aria-hidden="true"></i>
                                             </div>
-                                            <div class="min-w-0">
+                                            <div class="min-w-0 flex-1">
                                                 <div class="text-xs font-bold text-gray-800 dark:text-gray-200 truncate" title="${doc.fileName}">${doc.fileName}</div>
                                                 ${metaParts.length > 0 ? `
                                                 <div class="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
@@ -7999,15 +8260,15 @@
                                                 </div>` : ''}
                                             </div>
                                         </div>
-                                        <div class="flex items-center gap-1.5 shrink-0">
-                                            <button type="button" onclick="previewDocumentInline('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', '', '${doc.downloadUrl || ''}')" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition flex items-center gap-1" title="Preview Document Inline">
-                                                <i class="fa-solid fa-eye text-[10px]"></i> View
+                                        <div class="flex items-center justify-end gap-1.5 shrink-0">
+                                            <button type="button" onclick="previewDocumentInline('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', '', '${doc.downloadUrl || ''}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition flex items-center gap-1" title="Preview Document Inline">
+                                                <i class="fa-solid fa-eye text-[10px]" aria-hidden="true"></i> View
                                             </button>
-                                            <button type="button" onclick="downloadDocumentDirect('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', this, '${doc.downloadUrl || ''}')" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 disabled:opacity-60 transition flex items-center gap-1" title="Download Original File Directly">
-                                                <i class="fa-solid fa-download text-[10px]"></i> <span>Download</span>
+                                            <button type="button" onclick="downloadDocumentDirect('${doc.fileId}', '${doc.fileName.replace(/'/g, "\\'")}', this, '${doc.downloadUrl || ''}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 disabled:opacity-60 transition flex items-center gap-1" title="Download Original File Directly">
+                                                <i class="fa-solid fa-download text-[10px]" aria-hidden="true"></i> <span>Download</span>
                                             </button>
-                                            <button type="button" onclick="deleteSingleProductDoc('${doc.fileId}', '${safeName}')" class="w-7 h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Delete Document">
-                                                <i class="fa-solid fa-trash-can text-xs"></i>
+                                            <button type="button" onclick="deleteSingleProductDoc('${doc.fileId}', '${safeName}')" aria-label="Delete Document" class="modal-touch-btn w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Delete Document">
+                                                <i class="fa-solid fa-trash-can text-xs" aria-hidden="true"></i>
                                             </button>
                                         </div>
                                     </div>
@@ -8079,7 +8340,7 @@
                         <input type="text" id="edit_company" value="${escapeHtmlAttr(p.company)}" class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                             <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Product Type</label>
                             <input type="text" id="edit_productType" value="${escapeHtmlAttr(p.productType)}" class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
@@ -8090,7 +8351,7 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                             <label class="block font-bold text-gray-700 dark:text-gray-300 mb-1">Currency</label>
                             <input type="text" id="edit_currency" value="${escapeHtmlAttr(p.currency)}" class="w-full border dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
