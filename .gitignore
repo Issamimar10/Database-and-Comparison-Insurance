@@ -36,6 +36,7 @@ $RECYCLE.BIN/
 # Local backups and test files
 backups/
 test*.html
+.agents/
 
 # Log Audit 
 Ringkasan_Security_Audit_Test2.4_dan_AppsScript.docx
@@ -44,3 +45,4 @@ AUDIT_EFEKTIVITAS_KODE_IDCM.docx
 Audit_Security_Codex_Index_dan_AppsScript.docx
 DEPLOYMENT_GUIDE.docx
 LAPORAN_IMPROVEMENT_IDCM.docx
+LAPORAN_AUDIT_SECURITY_DAN_CODE_IDCM.docx
