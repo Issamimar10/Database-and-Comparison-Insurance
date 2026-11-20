@@ -54,22 +54,15 @@
             return escapeHtml(str);
         }
 
+        // Autentikasi menggunakan HttpOnly Cookie via Cloudflare Pages Function (/api).
+        // Tidak ada sessionToken yang disimpan di localStorage/sessionStorage.
         function getAuthSessionToken() {
-            try {
-                const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
-                if (!raw) return "";
-                const parsed = JSON.parse(raw);
-                if (!parsed || typeof parsed.sessionToken !== "string" || parsed.sessionToken.length < 16) return "";
-                if (!parsed.expiresAt || Date.now() > Number(parsed.expiresAt)) return "";
-                return parsed.sessionToken;
-            } catch (e) {
-                return "";
-            }
+            return "";
         }
 
         function getCurrentUserRole() {
             try {
-                const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
+                const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
                 if (!raw) return "viewer";
                 const parsed = JSON.parse(raw);
                 const r = String((parsed && parsed.role) || "viewer").trim().toLowerCase();
@@ -114,8 +107,7 @@
         }
 
         function withSessionToken(payloadObj) {
-            const token = getAuthSessionToken();
-            return Object.assign({}, payloadObj, token ? { sessionToken: token } : {});
+            return Object.assign({}, payloadObj);
         }
 
         function clearAllSensitiveClientCaches() {
@@ -187,6 +179,7 @@
                 : withSessionToken(payloadObj);
             const resp = await fetch(APPS_SCRIPT_URL, {
                 method: 'POST',
+                credentials: 'same-origin',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify(bodyObj)
             });
@@ -3312,7 +3305,7 @@
         const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
         const DEFAULT_SHEET_TABS = ["Conventional", "Sharia", "Health & Surgical", "DPLK"];
         let SHEET_TABS = [...DEFAULT_SHEET_TABS];
-        const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzN9HcjcNz40HuLU3FrwunOuLiJ9CB4_kvoTc9DxmckLl12pG7GQUGKkbmVtrzBnf06/exec";
+        const APPS_SCRIPT_URL = "/api";
 
         function syncSheetTabSelectors() {
             const optionsHtml = SHEET_TABS
@@ -5433,12 +5426,13 @@
         // ====================================================
         function getActiveAuthSession() {
             try {
-                const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
+                // Bersihkan sisa token legacy di localStorage (migrasi ke HttpOnly cookie)
+                try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch (e) { }
+                const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
                 if (!raw) return null;
                 const parsed = JSON.parse(raw);
-                if (!parsed || !parsed.username || !parsed.expiresAt || typeof parsed.sessionToken !== "string" || parsed.sessionToken.length < 16) return null;
+                if (!parsed || !parsed.username || !parsed.expiresAt) return null;
                 if (Date.now() > Number(parsed.expiresAt)) {
-                    localStorage.removeItem(AUTH_STORAGE_KEY);
                     sessionStorage.removeItem(AUTH_STORAGE_KEY);
                     return null;
                 }
@@ -5448,23 +5442,18 @@
             }
         }
 
-        function saveAuthSession(userObj, rememberMe = true, sessionToken = "", serverExpiresAt = null) {
+        function saveAuthSession(userObj, rememberMe = true, _sessionToken = "", serverExpiresAt = null) {
             const durationMs = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
+            // Simpan hanya metadata non-sensitif di sessionStorage; kredensial sesi sesungguhnya ada di HttpOnly cookie
             const sessionData = {
                 username: userObj.username,
                 email: userObj.email || "",
                 role: String(userObj.role || "viewer").trim().toLowerCase(),
-                sessionToken: String(sessionToken || ""),
                 loginAt: Date.now(),
                 expiresAt: serverExpiresAt ? Number(serverExpiresAt) : (Date.now() + durationMs)
             };
-            if (rememberMe) {
-                localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
-                sessionStorage.removeItem(AUTH_STORAGE_KEY);
-            } else {
-                sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
-                localStorage.removeItem(AUTH_STORAGE_KEY);
-            }
+            try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch (e) { }
+            try { sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData)); } catch (e) { }
             return sessionData;
         }
 
@@ -5557,12 +5546,9 @@
 
         function handleLogout() {
             if (!confirm("Are you sure you want to Sign Out of this session?")) return;
-            const currentToken = getAuthSessionToken();
-            if (currentToken) {
-                try {
-                    postAuthenticatedAppsScript({ action: "auth_logout" }, { requireSuccess: false, explicitToken: currentToken }).catch(() => { });
-                } catch (e) { }
-            }
+            try {
+                postAuthenticatedAppsScript({ action: "auth_logout" }, { requireSuccess: false }).catch(() => { });
+            } catch (e) { }
             localStorage.removeItem(AUTH_STORAGE_KEY);
             sessionStorage.removeItem(AUTH_STORAGE_KEY);
             clearAllSensitiveClientCaches();
@@ -5597,6 +5583,7 @@
             try {
                 const resp = await fetch(APPS_SCRIPT_URL, {
                     method: "POST",
+                    credentials: "same-origin",
                     headers: { "Content-Type": "text/plain;charset=utf-8" },
                     signal: (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") ? AbortSignal.timeout(30000) : undefined,
                     body: JSON.stringify({
@@ -5607,11 +5594,11 @@
                     })
                 });
                 const res = await resp.json();
-                if (!res || res.status !== "success" || !res.user || !res.sessionToken) {
+                if (!res || res.status !== "success" || !res.user) {
                     throw new Error((res && res.message) || "Sign In failed. Please check your Username/Email and Password.");
                 }
 
-                const session = saveAuthSession(res.user, rememberMe, res.sessionToken, res.expiresAt);
+                const session = saveAuthSession(res.user, rememberMe, "", res.expiresAt);
                 unlockAppWithSession(session);
             } catch (err) {
                 if (err && (err.name === "TimeoutError" || err.name === "AbortError")) {
@@ -5648,6 +5635,7 @@
             try {
                 const resp = await fetch(APPS_SCRIPT_URL, {
                     method: "POST",
+                    credentials: "same-origin",
                     headers: { "Content-Type": "text/plain;charset=utf-8" },
                     body: JSON.stringify({
                         action: "auth_signup",
@@ -5658,11 +5646,11 @@
                     })
                 });
                 const res = await resp.json();
-                if (!res || res.status !== "success" || !res.user || !res.sessionToken) {
+                if (!res || res.status !== "success" || !res.user) {
                     throw new Error((res && res.message) || "Failed to register new account.");
                 }
 
-                const session = saveAuthSession(res.user, true, res.sessionToken, res.expiresAt);
+                const session = saveAuthSession(res.user, true, "", res.expiresAt);
                 unlockAppWithSession(session);
             } catch (err) {
                 showAuthAlert(err.message || "Failed to connect to registration server.", "error");
@@ -5754,13 +5742,28 @@
             }
         }
 
-        document.addEventListener("DOMContentLoaded", () => {
+        document.addEventListener("DOMContentLoaded", async () => {
             updateThemeUI();
             updateStickyFilterPosition();
-            const existingSession = getActiveAuthSession();
-            if (existingSession) {
-                unlockAppWithSession(existingSession);
-            }
+            // Verifikasi sesi HttpOnly cookie langsung ke server (/api -> auth_me)
+            try {
+                const resp = await fetch(APPS_SCRIPT_URL, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "text/plain;charset=utf-8" },
+                    body: JSON.stringify({ action: "auth_me" })
+                });
+                if (resp.ok) {
+                    const res = await resp.json();
+                    if (res && res.status === "success" && res.user) {
+                        const session = saveAuthSession(res.user, true, "", res.expiresAt);
+                        unlockAppWithSession(session);
+                        return;
+                    }
+                }
+            } catch (e) { }
+            try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch (e) { }
+            try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (e) { }
         });
 
         function processSheetData(jsonData, categoryName) {

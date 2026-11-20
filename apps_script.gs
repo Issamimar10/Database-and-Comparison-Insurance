@@ -1850,6 +1850,19 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.TEXT);
 }
 
+function getConfiguredProxySecret_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get("IDCM_PROXY_SECRET_CACHE_V1");
+    if (cached !== null) return cached;
+    const val = String(PropertiesService.getScriptProperties().getProperty("IDCM_PROXY_SECRET") || "").trim();
+    cache.put("IDCM_PROXY_SECRET_CACHE_V1", val, 300);
+    return val;
+  } catch (e) {
+    return "";
+  }
+}
+
 function doPost(e) {
   let lock = null;
   try {
@@ -1858,6 +1871,14 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
     const payload = JSON.parse(e.postData.contents);
+    const configuredProxySecret = getConfiguredProxySecret_();
+    if (configuredProxySecret && !constantTimeEquals_(String((payload && payload.proxySecret) || ""), configuredProxySecret)) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "error",
+        code: "FORBIDDEN",
+        message: "Akses langsung ditolak. Gunakan alamat resmi aplikasi."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
     let _cachedSs = null;
     function getSs() {
       if (!_cachedSs) _cachedSs = SpreadsheetApp.getActiveSpreadsheet();
@@ -1940,6 +1961,19 @@ function doPost(e) {
     if (reqAction === "auth_logout") {
       revokeSessionToken_(payload && payload.sessionToken);
       return jsonResponse({ status: "success", action: "auth_logout" });
+    }
+
+    if (reqAction === "auth_me") {
+      return jsonResponse({
+        status: "success",
+        action: "auth_me",
+        expiresAt: activeSession.expiresAt,
+        user: {
+          username: activeSession.username,
+          email: activeSession.email,
+          role: normalizeUserRole_(activeSession.role)
+        }
+      });
     }
 
     if (WRITE_LOCK_ACTIONS[reqAction]) {
