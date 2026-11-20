@@ -183,9 +183,38 @@ function pruneExpiredSessions_(props) {
   pruneAndCapUserSessions_(props, "");
 }
 
-function issueSessionToken_(username, email, ttlMs) {
+function normalizeUserRole_(rawRole) {
+  const r = String(rawRole || "").trim().toLowerCase();
+  if (r === "admin" || r === "administrator") return "admin";
+  if (r === "editor") return "editor";
+  return "viewer";
+}
+
+function revokeAllSessionsForUser_(targetUsernameLower) {
+  const cleanTarget = String(targetUsernameLower || "").trim().toLowerCase();
+  if (!cleanTarget) return;
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const cache = CacheService.getScriptCache();
+    const all = props.getProperties();
+    Object.keys(all).forEach(function(k) {
+      if (k.indexOf("SESSION_") === 0) {
+        try {
+          const parsed = JSON.parse(all[k]);
+          if (parsed && String(parsed.username || "").trim().toLowerCase() === cleanTarget) {
+            props.deleteProperty(k);
+            try { cache.remove(k); } catch (e) {}
+          }
+        } catch (e) {}
+      }
+    });
+  } catch (e) {}
+}
+
+function issueSessionToken_(username, email, ttlMs, role) {
   const cleanUser = String(username || "").trim();
   const cleanEmail = String(email || "").trim().toLowerCase();
+  const cleanRole = normalizeUserRole_(role);
   const duration = (typeof ttlMs === "number" && ttlMs > 0)
     ? Math.min(ttlMs, SESSION_REMEMBER_TTL_MS)
     : SESSION_DEFAULT_TTL_MS;
@@ -198,6 +227,7 @@ function issueSessionToken_(username, email, ttlMs) {
   const record = {
     username: cleanUser,
     email: cleanEmail,
+    role: cleanRole,
     issuedAt: now,
     expiresAt: expiresAt
   };
@@ -213,7 +243,7 @@ function issueSessionToken_(username, email, ttlMs) {
   props.setProperty(key, serialized);
   pruneAndCapUserSessions_(props, cleanUser.toLowerCase());
 
-  return { token: token, expiresAt: expiresAt };
+  return { token: token, expiresAt: expiresAt, role: cleanRole };
 }
 
 function verifySessionToken_(token) {
@@ -226,6 +256,7 @@ function verifySessionToken_(token) {
     if (cached) {
       const parsedC = JSON.parse(cached);
       if (parsedC && parsedC.username && Date.now() <= Number(parsedC.expiresAt)) {
+        parsedC.role = normalizeUserRole_(parsedC.role);
         return parsedC;
       }
     }
@@ -240,6 +271,7 @@ function verifySessionToken_(token) {
       props.deleteProperty(key);
       return null;
     }
+    parsed.role = normalizeUserRole_(parsed.role);
     try {
       const remSec = Math.min(21600, Math.max(60, Math.floor((Number(parsed.expiresAt) - Date.now()) / 1000)));
       CacheService.getScriptCache().put(key, raw, remSec);
@@ -1529,6 +1561,122 @@ function saveBenefitAliases_(ss, mappings) {
   return added;
 }
 
+// Kelola (List / Upsert / Delete) entri Alias Benefit & Non-Benefit di sheet Config secara aman dari frontend
+function manageBenefitAliases_(ss, payload) {
+  const configSheet = ensureDefaultConfigSheet_(ss, false);
+  const op = String((payload && payload.op) || "list").trim().toLowerCase();
+
+  function readEntries_() {
+    const lastRow = configSheet.getLastRow();
+    const lastCol = Math.max(4, configSheet.getLastColumn());
+    const data = lastRow > 0 ? configSheet.getRange(1, 1, lastRow, lastCol).getDisplayValues() : [];
+    const entries = [];
+    for (let i = 1; i < data.length; i++) {
+      const rawType = String(data[i][0] || "").trim();
+      const typeLower = rawType.toLowerCase();
+      const canonical = String(data[i][1] || "").trim();
+      const isNbType = typeLower === "non-benefit" || typeLower === "non-benefit (syariah)" || typeLower === "non-benefit (dplk)";
+      const isBenType = typeLower === "benefit" || typeLower === "benefit (dplk)";
+      if ((isBenType || isNbType) && canonical) {
+        entries.push({
+          rowNum: i + 1,
+          entryType: rawType,
+          groupKey: isNbType ? "non-benefit" : "benefit",
+          canonical: canonical,
+          aliases: splitBenefitAliasList_(data[i][2]),
+          description: String(data[i][3] || "").trim()
+        });
+      }
+    }
+    return entries;
+  }
+
+  if (op === "list") {
+    return { entries: readEntries_() };
+  }
+
+  if (op === "upsert") {
+    const rawType = String(payload.entryType || "Benefit").trim();
+    const typeLower = rawType.toLowerCase();
+    const isNb = typeLower.indexOf("non-benefit") === 0;
+    const safeType = isNb
+      ? (typeLower === "non-benefit (syariah)" ? "Non-Benefit (Syariah)" : (typeLower === "non-benefit (dplk)" ? "Non-Benefit (DPLK)" : "Non-Benefit"))
+      : (typeLower === "benefit (dplk)" ? "Benefit (DPLK)" : "Benefit");
+    const canonical = String(payload.canonical || "").trim();
+    if (!canonical) {
+      throw new Error("Nama utama (canonical) tidak boleh kosong.");
+    }
+    const rawAliases = Array.isArray(payload.aliases)
+      ? payload.aliases.join(", ")
+      : String(payload.aliases || "");
+    const cleanAliases = [];
+    const seenAlias = {};
+    const canonicalKey = normalizeBenefitAliasKey_(canonical);
+    splitBenefitAliasList_(rawAliases).forEach(function(a) {
+      const aClean = a.replace(/[:：]\s*$/, "").trim();
+      const aKey = normalizeBenefitAliasKey_(aClean);
+      if (aKey && aKey !== canonicalKey && !seenAlias[aKey]) {
+        seenAlias[aKey] = true;
+        cleanAliases.push(aClean);
+      }
+    });
+    const aliasStr = cleanAliases.join(", ");
+    const desc = String(payload.description || "").trim() || getDefaultConfigDescription_(safeType, canonical);
+    const reqRowNum = parseInt(payload.rowNum, 10) || 0;
+
+    const entries = readEntries_();
+    let targetRowNum = 0;
+    if (reqRowNum >= 2) {
+      const matchByRow = entries.find(function(e) { return e.rowNum === reqRowNum; });
+      if (matchByRow) targetRowNum = matchByRow.rowNum;
+    }
+    if (!targetRowNum) {
+      const groupKey = isNb ? "non-benefit" : "benefit";
+      const matchByKey = entries.find(function(e) {
+        return e.groupKey === groupKey && normalizeBenefitAliasKey_(e.canonical) === canonicalKey;
+      });
+      if (matchByKey) targetRowNum = matchByKey.rowNum;
+    }
+
+    if (targetRowNum >= 2) {
+      const r = configSheet.getRange(targetRowNum, 1, 1, 4);
+      r.setNumberFormat("@");
+      r.setValues([sanitizeSheetRow_([safeType, canonical, aliasStr, desc])]);
+    } else {
+      const newRowNum = configSheet.getLastRow() + 1;
+      const r = configSheet.getRange(newRowNum, 1, 1, 4);
+      r.setNumberFormat("@");
+      r.setValues([sanitizeSheetRow_([safeType, canonical, aliasStr, desc])]);
+    }
+
+    invalidateSummaryCache_();
+    return {
+      entries: readEntries_(),
+      config: buildAllProductDataResponse("summary", true).config
+    };
+  }
+
+  if (op === "delete") {
+    const reqRowNum = parseInt(payload.rowNum, 10) || 0;
+    const reqCanonical = String(payload.canonical || "").trim().toLowerCase();
+    const entries = readEntries_();
+    const target = entries.find(function(e) {
+      return e.rowNum === reqRowNum && (!reqCanonical || e.canonical.toLowerCase() === reqCanonical);
+    });
+    if (!target) {
+      throw new Error("Entri alias tidak ditemukan atau bukan baris Benefit/Non-Benefit.");
+    }
+    configSheet.deleteRow(target.rowNum);
+    invalidateSummaryCache_();
+    return {
+      entries: readEntries_(),
+      config: buildAllProductDataResponse("summary", true).config
+    };
+  }
+
+  throw new Error("Operasi manage_benefit_aliases tidak valid.");
+}
+
 // Helper: Ambil seluruh daftar dokumen produk dengan Drive Advanced Service (mendukung v2 & v3),
 // atau fallback otomatis ke DriveApp jika Drive API belum diaktifkan.
 function listAllProductDocumentsFast_() {
@@ -1739,19 +1887,52 @@ function doPost(e) {
       "delete": true,
       "save_sheet_category_config": true,
       "save_benefit_aliases": true,
+      "manage_benefit_aliases": true,
+      "admin_manage_users": true,
       "auth_signup": true,
       "auth_request_otp": true,
       "auth_reset_password": true
     };
 
+    // RBAC: Pembagian izin berbasis Role (viewer < editor < admin)
+    const EDITOR_ACTIONS = {
+      "append": true,
+      "update": true,
+      "upload_document": true,
+      "save_benefit_aliases": true
+    };
+    const ADMIN_ACTIONS = {
+      "delete": true,
+      "delete_document": true,
+      "save_sheet_category_config": true,
+      "manage_benefit_aliases": true,
+      "admin_manage_users": true
+    };
+
     const reqAction = String((payload && payload.action) || "").trim();
+    let activeSession = null;
     if (!PUBLIC_AUTH_ACTIONS[reqAction]) {
-      const activeSession = verifySessionToken_(payload && payload.sessionToken);
+      activeSession = verifySessionToken_(payload && payload.sessionToken);
       if (!activeSession) {
         return jsonResponse({
           status: "error",
           code: "UNAUTHORIZED",
           message: "Sesi tidak valid atau telah berakhir. Silakan Sign In kembali."
+        });
+      }
+      const userRole = normalizeUserRole_(activeSession.role);
+      if (ADMIN_ACTIONS[reqAction] && userRole !== "admin") {
+        return jsonResponse({
+          status: "error",
+          code: "FORBIDDEN",
+          message: "Akses ditolak: aksi ini hanya diizinkan untuk Admin."
+        });
+      }
+      if (EDITOR_ACTIONS[reqAction] && userRole !== "editor" && userRole !== "admin") {
+        return jsonResponse({
+          status: "error",
+          code: "FORBIDDEN",
+          message: "Akses ditolak: akun Viewer hanya dapat melihat dan membandingkan data."
         });
       }
     }
@@ -2272,7 +2453,7 @@ function doPost(e) {
       try {
         const cachedRowNum = parseInt(cache.get(idxCacheKey) || "0", 10);
         if (cachedRowNum >= 2 && cachedRowNum <= lastRow) {
-          const rowVals = uSheet.getRange(cachedRowNum, 1, 1, 8).getValues()[0];
+          const rowVals = uSheet.getRange(cachedRowNum, 1, 1, 9).getValues()[0];
           const uName = String(rowVals[0] || "").trim().toLowerCase();
           const uEmail = String(rowVals[1] || "").trim().toLowerCase();
           if (uName === cleanId || uEmail === cleanId) {
@@ -2289,7 +2470,7 @@ function doPost(e) {
 
       if (foundRange) {
         const rowNum = foundRange.getRow();
-        const rowVals = uSheet.getRange(rowNum, 1, 1, 8).getValues()[0];
+        const rowVals = uSheet.getRange(rowNum, 1, 1, 9).getValues()[0];
         try {
           cache.put(idxCacheKey, String(rowNum), 600);
         } catch (e) {}
@@ -2303,7 +2484,7 @@ function doPost(e) {
         const uEmail = String(nameEmailRows[i][1] || "").trim().toLowerCase();
         if (uName === cleanId || uEmail === cleanId) {
           const rowNum = i + 2;
-          const rowVals = uSheet.getRange(rowNum, 1, 1, 8).getValues()[0];
+          const rowVals = uSheet.getRange(rowNum, 1, 1, 9).getValues()[0];
           try {
             cache.put(idxCacheKey, String(rowNum), 600);
           } catch (e) {}
@@ -2332,7 +2513,7 @@ function doPost(e) {
 
     function getOrCreateUsersSheet() {
       let uSheet = getSs().getSheetByName("Users");
-      const headers = ["Username", "Email", "PasswordHash", "Salt", "CreatedAt", "ResetOTP", "OTPExpiry", "LastLogin"];
+      const headers = ["Username", "Email", "PasswordHash", "Salt", "CreatedAt", "ResetOTP", "OTPExpiry", "LastLogin", "Role"];
       if (!uSheet) {
         uSheet = getSs().insertSheet("Users");
         const r = uSheet.getRange(1, 1, 1, headers.length);
@@ -2344,6 +2525,11 @@ function doPost(e) {
         r.setNumberFormat("@");
         r.setValues([headers]);
         r.setFontWeight("bold");
+      } else if (uSheet.getLastColumn() < headers.length) {
+        const roleHdr = uSheet.getRange(1, 9);
+        roleHdr.setNumberFormat("@");
+        roleHdr.setValue("Role");
+        roleHdr.setFontWeight("bold");
       }
       return uSheet;
     }
@@ -2431,19 +2617,20 @@ function doPost(e) {
       const pwdHash = hashPasswordWithSalt(password, salt, PASSWORD_HASH_ITERATIONS);
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd HH:mm:ss");
       const newRowNum = uSheet.getLastRow() + 1;
-      writeRowAsPlainText(uSheet, newRowNum, [username, email, pwdHash, salt, nowStr, "", "", nowStr]);
+      const defaultRole = "viewer";
+      writeRowAsPlainText(uSheet, newRowNum, [username, email, pwdHash, salt, nowStr, "", "", nowStr, defaultRole]);
       try {
         authCache.put("USER_ROW_IDX_" + shortCacheHash_(username.toLowerCase()), String(newRowNum), 600);
         authCache.put("USER_ROW_IDX_" + shortCacheHash_(email), String(newRowNum), 600);
       } catch (e) {}
 
-      const sessionObj = issueSessionToken_(username, email, SESSION_REMEMBER_TTL_MS);
+      const sessionObj = issueSessionToken_(username, email, SESSION_REMEMBER_TTL_MS, defaultRole);
       return jsonResponse({
         status: "success",
         action: "auth_signup",
         sessionToken: sessionObj.token,
         expiresAt: sessionObj.expiresAt,
-        user: { username: username, email: email }
+        user: { username: username, email: email, role: defaultRole }
       });
     }
 
@@ -2529,8 +2716,9 @@ function doPost(e) {
 
       const uname = String(row[0] || "").trim();
       const uemail = String(row[1] || "").trim();
+      const urole = normalizeUserRole_(row[8]);
       const ttlMs = rememberMe ? SESSION_REMEMBER_TTL_MS : SESSION_DEFAULT_TTL_MS;
-      const sessionObj = issueSessionToken_(uname, uemail, ttlMs);
+      const sessionObj = issueSessionToken_(uname, uemail, ttlMs, urole);
 
       return jsonResponse({
         status: "success",
@@ -2539,9 +2727,137 @@ function doPost(e) {
         expiresAt: sessionObj.expiresAt,
         user: {
           username: uname,
-          email: uemail
+          email: uemail,
+          role: urole
         }
       });
+    }
+
+    // 0E. ACTION: ADMIN_MANAGE_USERS (Khusus Admin: List User, Ubah Role, Hapus User & Cabut Sesi)
+    if (payload.action === "admin_manage_users") {
+      const uSheet = getOrCreateUsersSheet();
+      const op = String(payload.op || "list").trim().toLowerCase();
+      const actorLower = String((activeSession && activeSession.username) || "").trim().toLowerCase();
+
+      function readAllUsersInternal_() {
+        const lastRow = uSheet.getLastRow();
+        if (lastRow < 2) return [];
+        const vals = uSheet.getRange(2, 1, lastRow - 1, 9).getDisplayValues();
+        const out = [];
+        for (let i = 0; i < vals.length; i++) {
+          const u = String(vals[i][0] || "").trim();
+          if (!u) continue;
+          out.push({
+            rowNum: i + 2,
+            username: u,
+            emailLower: String(vals[i][1] || "").trim().toLowerCase(),
+            passwordHash: String(vals[i][2] || "").trim(),
+            salt: String(vals[i][3] || "").trim(),
+            createdAt: String(vals[i][4] || "").trim(),
+            lastLogin: String(vals[i][7] || "").trim(),
+            role: normalizeUserRole_(vals[i][8])
+          });
+        }
+        return out;
+      }
+
+      function toPublicUsersList_(internalUsers) {
+        return internalUsers.map(function(u) {
+          return {
+            rowNum: u.rowNum,
+            username: u.username,
+            createdAt: u.createdAt,
+            lastLogin: u.lastLogin,
+            role: u.role
+          };
+        });
+      }
+
+      // Re-verifikasi role aktor di dalam ScriptLock (mencegah race condition jika 2 Admin saling demote bersamaan)
+      const allUsersNow = readAllUsersInternal_();
+      const actorRecord = allUsersNow.find(function(u) { return u.username.toLowerCase() === actorLower; });
+      if (!actorRecord || actorRecord.role !== "admin") {
+        revokeAllSessionsForUser_(actorLower);
+        return jsonResponse({
+          status: "error",
+          code: "UNAUTHORIZED",
+          message: "Hak akses Admin Anda telah dicabut atau berubah. Silakan Sign In kembali."
+        });
+      }
+
+      if (op === "list") {
+        return jsonResponse({ status: "success", action: "admin_manage_users", users: toPublicUsersList_(allUsersNow) });
+      }
+
+      if (op === "set_role") {
+        const targetUsername = String(payload.username || "").trim().toLowerCase();
+        const nextRole = normalizeUserRole_(payload.role);
+        if (!targetUsername) {
+          return jsonResponse({ status: "error", message: "Username target tidak valid." });
+        }
+        const target = allUsersNow.find(function(u) { return u.username.toLowerCase() === targetUsername; });
+        if (!target) {
+          return jsonResponse({ status: "error", message: "User tidak ditemukan." });
+        }
+        if (target.role === nextRole) {
+          return jsonResponse({ status: "success", action: "admin_manage_users", selfDemoted: false, users: toPublicUsersList_(allUsersNow) });
+        }
+
+        // Validasi ketat Last Admin: tolak tanpa mencabut sesi jika hanya tersisa 1 Admin
+        if (target.role === "admin" && nextRole !== "admin") {
+          const adminCount = allUsersNow.filter(function(u) { return u.role === "admin"; }).length;
+          if (adminCount <= 1) {
+            return jsonResponse({ status: "error", message: "Tidak dapat menurunkan role Admin terakhir. Promosikan user lain ke Admin terlebih dahulu." });
+          }
+        }
+
+        // Opsi 2: Setiap perubahan yang melibatkan role Admin (promote ke Admin / demote Admin / demote diri sendiri) wajib verifikasi password Admin
+        const involvesAdminRole = (target.role === "admin" || nextRole === "admin");
+        if (involvesAdminRole) {
+          const adminPwd = String(payload.adminPassword || "");
+          if (!adminPwd || adminPwd.length > MAX_PASSWORD_LENGTH) {
+            return jsonResponse({ status: "error", code: "INVALID_ADMIN_PASSWORD", message: "Password Admin wajib diisi untuk mengonfirmasi perubahan role Admin." });
+          }
+          const pwdCheck = verifyPasswordAutoMigrate_(adminPwd, actorRecord.passwordHash, actorRecord.salt);
+          if (!pwdCheck.ok) {
+            return jsonResponse({ status: "error", code: "INVALID_ADMIN_PASSWORD", message: "Password Admin tidak sesuai." });
+          }
+        }
+
+        uSheet.getRange(target.rowNum, 9).setNumberFormat("@").setValue(sanitizeSheetCell_(nextRole));
+        revokeAllSessionsForUser_(targetUsername);
+        const selfDemoted = (targetUsername === actorLower && nextRole !== "admin");
+        return jsonResponse({
+          status: "success",
+          action: "admin_manage_users",
+          selfDemoted: selfDemoted,
+          users: toPublicUsersList_(readAllUsersInternal_())
+        });
+      }
+
+      if (op === "delete_user") {
+        const targetUsername = String(payload.username || "").trim().toLowerCase();
+        if (!targetUsername) {
+          return jsonResponse({ status: "error", message: "Username target tidak valid." });
+        }
+        if (targetUsername === actorLower) {
+          return jsonResponse({ status: "error", message: "Anda tidak dapat menghapus akun Anda sendiri." });
+        }
+        const target = allUsersNow.find(function(u) { return u.username.toLowerCase() === targetUsername; });
+        if (!target) {
+          return jsonResponse({ status: "error", message: "User tidak ditemukan." });
+        }
+        uSheet.deleteRow(target.rowNum);
+        revokeAllSessionsForUser_(targetUsername);
+        try {
+          const c = CacheService.getScriptCache();
+          c.remove("USER_ROW_IDX_" + shortCacheHash_(targetUsername));
+          if (target.emailLower) c.remove("USER_ROW_IDX_" + shortCacheHash_(target.emailLower));
+        } catch (e) {}
+        return jsonResponse({ status: "success", action: "admin_manage_users", users: toPublicUsersList_(readAllUsersInternal_()) });
+      }
+
+      return jsonResponse({ status: "error", message: "Operasi admin_manage_users tidak dikenali." });
     }
 
     // 0C. ACTION: AUTH_REQUEST_OTP (Kirim Kode OTP 6 Digit ke Email — Anti-Enumerasi & Global Rate Limit)
@@ -3026,6 +3342,16 @@ function doPost(e) {
       const addedCount = saveBenefitAliases_(getSs(), payload.mappings);
       invalidateSummaryCache_();
       return jsonResponse({ status: "success", action: "save_benefit_aliases", added: addedCount });
+    }
+
+    if (payload.action === "manage_benefit_aliases") {
+      const result = manageBenefitAliases_(getSs(), payload);
+      return jsonResponse({
+        status: "success",
+        action: "manage_benefit_aliases",
+        entries: result.entries,
+        config: result.config || null
+      });
     }
 
     // ====================================================

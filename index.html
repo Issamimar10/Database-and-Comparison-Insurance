@@ -67,6 +67,52 @@
             }
         }
 
+        function getCurrentUserRole() {
+            try {
+                const raw = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
+                if (!raw) return "viewer";
+                const parsed = JSON.parse(raw);
+                const r = String((parsed && parsed.role) || "viewer").trim().toLowerCase();
+                if (r === "admin" || r === "administrator") return "admin";
+                if (r === "editor") return "editor";
+                return "viewer";
+            } catch (e) {
+                return "viewer";
+            }
+        }
+
+        function canEditData() {
+            const r = getCurrentUserRole();
+            return r === "editor" || r === "admin";
+        }
+
+        function isAdminUser() {
+            return getCurrentUserRole() === "admin";
+        }
+
+        function applyRoleBasedUI() {
+            const role = getCurrentUserRole();
+            const canEdit = role === "editor" || role === "admin";
+            const isAdmin = role === "admin";
+
+            document.querySelectorAll(".rbac-editor-only").forEach(el => {
+                el.classList.toggle("hidden", !canEdit);
+            });
+            document.querySelectorAll(".rbac-admin-only").forEach(el => {
+                el.classList.toggle("hidden", !isAdmin);
+            });
+
+            const badge = document.getElementById("navUserRoleBadge");
+            if (badge) {
+                badge.textContent = role.toUpperCase();
+                badge.className = role === "admin"
+                    ? "text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40 tracking-wider"
+                    : (role === "editor"
+                        ? "text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/40 tracking-wider"
+                        : "text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-neutral-500/25 text-neutral-300 border border-neutral-400/30 tracking-wider");
+            }
+        }
+
         function withSessionToken(payloadObj) {
             const token = getAuthSessionToken();
             return Object.assign({}, payloadObj, token ? { sessionToken: token } : {});
@@ -153,10 +199,162 @@
                 authErr.code = "UNAUTHORIZED";
                 throw authErr;
             }
+            if (res && res.code === "FORBIDDEN") {
+                showToast(res.message || "Akses ditolak untuk peran akun Anda.", "error");
+                const forbErr = new Error(res.message || "Forbidden.");
+                forbErr.code = "FORBIDDEN";
+                throw forbErr;
+            }
             if (requireSuccess && (!res || res.status !== "success")) {
                 throw new Error((res && res.message) || "Backend operation failed.");
             }
             return res;
+        }
+
+        // Modern Web Guidance: Non-intrusive Top-Layer Toast Notifications (popover="manual" + ariaNotify + live-region fallback)
+        function showToast(message, type = "auto", options = {}) {
+            const text = String(message || "").trim();
+            if (!text) return;
+
+            let resolvedType = type;
+            if (resolvedType === "auto") {
+                const lower = text.toLowerCase();
+                if (/^(success|berhasil|saved|tercopy|tersalin)/i.test(lower) || lower.includes("successfully")) {
+                    resolvedType = "success";
+                } else if (/(failed|error|gagal|invalid|exceed|cannot|tidak valid|tidak diizinkan|ditolak|expired)/i.test(lower)) {
+                    resolvedType = "error";
+                } else if (/(please |mohon |no |already exists|reserved|not support|restricted|tip:)/i.test(lower)) {
+                    resolvedType = "warning";
+                } else {
+                    resolvedType = "info";
+                }
+            }
+
+            const region = document.getElementById("toastRegion");
+            if (!region) {
+                console.warn("[Toast fallback]", resolvedType, text);
+                return;
+            }
+
+            // Pastikan container toast berada di Top Layer (di atas modal <dialog> yang sedang terbuka)
+            try {
+                if (typeof region.showPopover === "function") {
+                    if (region.matches(":popover-open")) {
+                        region.hidePopover();
+                    }
+                    region.showPopover();
+                } else {
+                    region.classList.add("is-open-fallback");
+                }
+            } catch (e) {
+                region.classList.add("is-open-fallback");
+            }
+
+            const palette = {
+                success: {
+                    box: "bg-emerald-50 dark:bg-neutral-800 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200",
+                    icon: "fa-circle-check text-emerald-600 dark:text-emerald-400"
+                },
+                error: {
+                    box: "bg-red-50 dark:bg-neutral-800 border-red-300 dark:border-red-700 text-red-900 dark:text-red-200",
+                    icon: "fa-circle-xmark text-red-600 dark:text-red-400"
+                },
+                warning: {
+                    box: "bg-amber-50 dark:bg-neutral-800 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200",
+                    icon: "fa-triangle-exclamation text-amber-600 dark:text-amber-400"
+                },
+                info: {
+                    box: "bg-sky-50 dark:bg-neutral-800 border-sky-300 dark:border-neutral-600 text-sky-900 dark:text-neutral-100",
+                    icon: "fa-circle-info text-sky-600 dark:text-sky-400"
+                }
+            };
+            const p = palette[resolvedType] || palette.info;
+
+            // Batasi maksimal 4 toast aktif agar layar tetap rapi
+            while (region.children.length >= 4) {
+                region.firstElementChild.remove();
+            }
+
+            const toastEl = document.createElement("div");
+            toastEl.className = `idcm-toast-item pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-xl text-xs leading-relaxed ${p.box}`;
+            toastEl.setAttribute("role", resolvedType === "error" ? "alert" : "status");
+
+            const iconEl = document.createElement("i");
+            iconEl.className = `fa-solid ${p.icon} text-sm mt-0.5 shrink-0`;
+            iconEl.setAttribute("aria-hidden", "true");
+
+            const bodyEl = document.createElement("div");
+            bodyEl.className = "flex-1 min-w-0 whitespace-pre-line break-words font-medium";
+            bodyEl.textContent = text;
+
+            const closeBtn = document.createElement("button");
+            closeBtn.type = "button";
+            closeBtn.setAttribute("aria-label", "Close notification");
+            closeBtn.className = "shrink-0 w-6 h-6 -mr-1 -mt-0.5 rounded-md flex items-center justify-center opacity-70 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 transition text-sm leading-none";
+            closeBtn.textContent = "×";
+
+            toastEl.appendChild(iconEl);
+            toastEl.appendChild(bodyEl);
+            toastEl.appendChild(closeBtn);
+            region.appendChild(toastEl);
+
+            // Screen reader announcement: ariaNotify() dengan fallback aria-live region
+            try {
+                if (typeof document.ariaNotify === "function") {
+                    document.ariaNotify(text, { priority: resolvedType === "error" ? "high" : "normal" });
+                } else {
+                    const srLive = document.getElementById("toastSrLive");
+                    if (srLive) {
+                        srLive.textContent = "";
+                        requestAnimationFrame(() => { srLive.textContent = text; });
+                    }
+                }
+            } catch (e) {}
+
+            let dismissed = false;
+            let timerId = null;
+            const durationMs = typeof options.duration === "number"
+                ? options.duration
+                : (resolvedType === "error" ? 6500 : (resolvedType === "warning" ? 5000 : 3800));
+
+            const dismiss = () => {
+                if (dismissed) return;
+                dismissed = true;
+                if (timerId) { clearTimeout(timerId); timerId = null; }
+                const wasFocused = toastEl.contains(document.activeElement);
+                const nextFocusBtn = toastEl.nextElementSibling?.querySelector("button") || toastEl.previousElementSibling?.querySelector("button");
+                toastEl.remove();
+                if (region.children.length === 0) {
+                    try {
+                        if (typeof region.hidePopover === "function" && region.matches(":popover-open")) {
+                            region.hidePopover();
+                        }
+                    } catch (e) {}
+                    region.classList.remove("is-open-fallback");
+                } else if (wasFocused && nextFocusBtn) {
+                    nextFocusBtn.focus();
+                }
+            };
+
+            const scheduleDismiss = () => {
+                if (durationMs <= 0 || dismissed) return;
+                if (timerId) clearTimeout(timerId);
+                timerId = setTimeout(() => {
+                    if (toastEl.contains(document.activeElement) || toastEl.matches(":hover")) {
+                        scheduleDismiss();
+                        return;
+                    }
+                    dismiss();
+                }, durationMs);
+            };
+
+            closeBtn.addEventListener("click", dismiss);
+            toastEl.addEventListener("mouseenter", () => { if (timerId) { clearTimeout(timerId); timerId = null; } });
+            toastEl.addEventListener("mouseleave", scheduleDismiss);
+            toastEl.addEventListener("focusin", () => { if (timerId) { clearTimeout(timerId); timerId = null; } });
+            toastEl.addEventListener("focusout", scheduleDismiss);
+
+            scheduleDismiss();
         }
 
         // Event delegation aman untuk klik gambar tabel & tombol salin gambar (anti DOM-XSS inline onclick)
@@ -184,7 +382,7 @@
         async function openBulkDownloadModal() {
             const selectedProds = products.filter(p => selectedProductIds.includes(p.id));
             if (selectedProds.length === 0) {
-                alert("Please select at least 1 product first to download documents.");
+                showToast("Please select at least 1 product first to download documents.");
                 return;
             }
 
@@ -263,7 +461,7 @@
             });
 
             if (docsToDownload.length === 0) {
-                alert("No documents available to download for the selected products.");
+                showToast("No documents available to download for the selected products.");
                 return;
             }
 
@@ -339,7 +537,7 @@
 
             } catch (err) {
                 console.error(err);
-                alert("An error occurred while creating the ZIP archive: " + err.message);
+                showToast("An error occurred while creating the ZIP archive: " + err.message);
             } finally {
                 btnStart.disabled = false;
                 btnCancel.disabled = false;
@@ -568,7 +766,7 @@
 
             setTimeout(() => {
                 closeBulkDocUploadModal();
-                alert(`Success! ${successCount} document${successCount !== 1 ? 's' : ''} uploaded and linked to their respective products in Google Drive.`);
+                showToast(`Success! ${successCount} document${successCount !== 1 ? 's' : ''} uploaded and linked to their respective products in Google Drive.`);
             }, 1000);
         }
 
@@ -598,7 +796,7 @@
             const btnSubmit = document.getElementById("btnSubmitSingleDoc");
 
             if (!fileInput.files || fileInput.files.length === 0) {
-                alert("Please select a document file first.");
+                showToast("Please select a document file first.");
                 return;
             }
 
@@ -700,7 +898,7 @@
 
             } catch (e) {
                 console.error("Failed to delete document:", e);
-                alert("Failed to delete document: " + e.message);
+                showToast("Failed to delete document: " + e.message);
             }
         }
 
@@ -1429,6 +1627,38 @@
             overscroll-behavior: contain;
         }
 
+        /* Modern Web Guidance: Persistent Top-Layer Toast Region (popover="manual") */
+        #toastRegion.idcm-toast-region {
+            position: fixed;
+            inset: auto 1rem 1rem auto;
+            margin: 0;
+            padding: 0;
+            border: none;
+            background: transparent;
+            width: min(24rem, calc(100vw - 2rem));
+            max-width: calc(100vw - 2rem);
+            display: none;
+            flex-direction: column;
+            gap: 0.5rem;
+            pointer-events: none;
+            overflow: visible;
+            z-index: 9999;
+            opacity: 0;
+            transition: opacity 0.2s ease, display 0.2s ease, overlay 0.2s ease;
+            transition-behavior: allow-discrete;
+        }
+
+        #toastRegion.idcm-toast-region:is(:popover-open, .\:popover-open, .is-open-fallback) {
+            display: flex;
+            opacity: 1;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #toastRegion.idcm-toast-region {
+                transition: none;
+            }
+        }
+
         /* Modern Web Guidance: Viewport-Aware Popover Dropdowns (CSS Anchor Positioning + @supports guard) */
         .dropdown-content[popover]:is(:popover-open, .\:popover-open) {
             display: block;
@@ -1920,6 +2150,8 @@
                     <i class="fa-solid fa-circle-user text-emerald-400 text-xs sm:text-sm" aria-hidden="true"></i>
                     <span id="navUsernameLabel"
                         class="text-[11px] sm:text-xs font-semibold text-blue-100 max-w-[58px] sm:max-w-[120px] truncate">User</span>
+                    <span id="navUserRoleBadge"
+                        class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-neutral-500/25 text-neutral-300 border border-neutral-400/30 tracking-wider">VIEWER</span>
                     <button type="button" onclick="handleLogout()" aria-label="Sign Out"
                         class="ms-1 sm:ms-1.5 pl-1.5 sm:pl-2 border-l border-blue-800 dark:border-neutral-700 text-red-300 hover:text-red-200 text-xs font-bold transition flex items-center gap-1"
                         title="Sign Out">
@@ -1960,18 +2192,25 @@
                         <i class="fa-solid fa-rotate text-xs sm:text-sm" id="refreshIcon" aria-hidden="true"></i>
                     </button>
 
-                    <!-- Upload Excel / Add Product Button -->
-                    <button onclick="openUploadModal()" aria-label="Add Product or Upload Excel"
-                        class="bg-green-600 hover:bg-green-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
+                    <!-- Upload Excel / Add Product Button (Editor & Admin) -->
+                    <button id="navBtnUploadProduct" onclick="openUploadModal()" aria-label="Add Product or Upload Excel"
+                        class="rbac-editor-only hidden bg-green-600 hover:bg-green-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
                         title="Add Product / Upload Excel">
                         <i class="fa-solid fa-file-arrow-up text-xs sm:text-sm" aria-hidden="true"></i>
                     </button>
 
-                    <!-- Bulk Document Upload Button -->
-                    <button onclick="openBulkDocUploadModal()" aria-label="Upload Product Documents in Bulk"
-                        class="bg-indigo-600 hover:bg-indigo-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
+                    <!-- Bulk Document Upload Button (Editor & Admin) -->
+                    <button id="navBtnBulkDocUpload" onclick="openBulkDocUploadModal()" aria-label="Upload Product Documents in Bulk"
+                        class="rbac-editor-only hidden bg-indigo-600 hover:bg-indigo-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
                         title="Upload Product Documents (Bulk Google Drive)">
                         <i class="fa-solid fa-folder-plus text-xs sm:text-sm" aria-hidden="true"></i>
+                    </button>
+
+                    <!-- Admin Manage Users Button (Admin Only) -->
+                    <button id="navBtnAdminUsers" onclick="openAdminUsersModal()" aria-label="Manage Users and Roles"
+                        class="rbac-admin-only hidden bg-amber-600 hover:bg-amber-500 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition shrink-0"
+                        title="Manage Users & Roles (Admin)">
+                        <i class="fa-solid fa-users-gear text-xs sm:text-sm" aria-hidden="true"></i>
                     </button>
                 </div>
 
@@ -2207,7 +2446,7 @@
             <i class="fa-solid fa-file-zipper" aria-hidden="true"></i> Documents
         </button>
         <button onclick="openDeleteConfirmModal(selectedProductIds)"
-            class="col-span-2 sm:col-auto bg-red-600 hover:bg-red-500 text-white text-xs sm:text-sm font-semibold px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl sm:rounded-full transition whitespace-nowrap flex items-center justify-center gap-1.5"
+            class="rbac-admin-only col-span-2 sm:col-auto bg-red-600 hover:bg-red-500 text-white text-xs sm:text-sm font-semibold px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl sm:rounded-full transition whitespace-nowrap flex items-center justify-center gap-1.5"
             title="Delete selected products from Google Sheets">
             <i class="fa-solid fa-trash-can" aria-hidden="true"></i> Delete
         </button>
@@ -2256,15 +2495,20 @@
                             <option value="DPLK">DPLK</option>
                         </select>
                         <button type="button" onclick="openSheetConfigModal('new')"
-                            class="modal-touch-btn px-2.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
+                            class="rbac-admin-only modal-touch-btn px-2.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
                             title="Create a new Google Sheet tab & configure its Provisions / Sections">
                             <i class="fa-solid fa-folder-plus" aria-hidden="true"></i> New Sheet
                         </button>
                         <button type="button"
                             onclick="openSheetConfigModal('edit', document.getElementById('uploadTargetSheet')?.value)"
-                            class="modal-touch-btn px-2.5 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
+                            class="rbac-admin-only modal-touch-btn px-2.5 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
                             title="Edit Provisions, Special Provisions & Product Sections for selected Category">
                             <i class="fa-solid fa-sliders" aria-hidden="true"></i> Edit Category
+                        </button>
+                        <button type="button" onclick="openAliasManagerModal()"
+                            class="rbac-admin-only modal-touch-btn px-2.5 py-2.5 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 whitespace-nowrap shadow-sm"
+                            title="View, edit, or delete Benefit & Non-Benefit aliases in Config">
+                            <i class="fa-solid fa-tags" aria-hidden="true"></i> Manage Aliases
                         </button>
                     </div>
                 </div>
@@ -2336,6 +2580,159 @@
                     <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Sheet &amp; Config
                 </button>
             </div>
+        </div>
+    </dialog>
+
+    <!-- Modal Manage Benefit & Non-Benefit Aliases (Config Alias Manager) -->
+    <dialog id="aliasManagerModal" closedby="closerequest" aria-labelledby="aliasManagerTitle"
+        class="idcm-native-dialog fixed inset-0 w-screen h-screen bg-transparent z-[68] hidden flex items-center justify-center p-2.5 sm:p-4">
+        <div
+            class="bg-white dark:bg-neutral-800 rounded-2xl w-full max-w-3xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-neutral-700">
+            <div class="p-3 sm:p-4 bg-slate-800 dark:bg-neutral-900 text-white flex justify-between items-center gap-2">
+                <h3 id="aliasManagerTitle"
+                    class="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0 truncate">
+                    <i class="fa-solid fa-tags text-amber-400 shrink-0" aria-hidden="true"></i> Manage Benefit &amp; Non-Benefit Aliases
+                </h3>
+                <button type="button" onclick="closeAliasManagerModal()" aria-label="Close alias manager"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-300 hover:text-white hover:bg-neutral-700 text-xl leading-none shrink-0">&times;</button>
+            </div>
+
+            <div class="p-3 sm:p-4 border-b dark:border-neutral-700 bg-gray-50 dark:bg-neutral-900/60 flex flex-wrap items-center gap-2">
+                <div class="inline-flex rounded-lg border dark:border-neutral-600 overflow-hidden text-xs font-semibold">
+                    <button type="button" id="aliasFilterAll" onclick="setAliasManagerFilter('all')"
+                        class="px-2.5 py-1.5 bg-blue-600 text-white transition">All</button>
+                    <button type="button" id="aliasFilterBenefit" onclick="setAliasManagerFilter('benefit')"
+                        class="px-2.5 py-1.5 bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 transition">Benefit</button>
+                    <button type="button" id="aliasFilterNonBenefit" onclick="setAliasManagerFilter('non-benefit')"
+                        class="px-2.5 py-1.5 bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 transition">Non-Benefit</button>
+                </div>
+                <input type="text" id="aliasManagerSearch" oninput="renderAliasManagerList()"
+                    placeholder="Search canonical name or alias..."
+                    class="flex-1 min-w-[180px] text-xs border dark:border-neutral-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="button" onclick="openAliasEditorForm(null)"
+                    class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1 shadow-sm">
+                    <i class="fa-solid fa-plus" aria-hidden="true"></i> Add Alias
+                </button>
+            </div>
+
+            <!-- Inline Add/Edit Form -->
+            <div id="aliasEditorFormBox" class="hidden p-3 sm:p-4 border-b dark:border-neutral-700 bg-amber-50/60 dark:bg-neutral-900/80 space-y-2.5 text-xs">
+                <div class="flex items-center justify-between">
+                    <span id="aliasEditorFormTitle" class="font-bold text-gray-800 dark:text-neutral-100">Add New Alias Entry</span>
+                    <button type="button" onclick="closeAliasEditorForm()" class="text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-100 text-xs underline">Cancel</button>
+                </div>
+                <input type="hidden" id="aliasEditRowNum" value="">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-600 dark:text-neutral-300 mb-1">Type</label>
+                        <select id="aliasEditType"
+                            class="w-full border dark:border-neutral-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="Benefit">Benefit</option>
+                            <option value="Benefit (DPLK)">Benefit (DPLK)</option>
+                            <option value="Non-Benefit">Non-Benefit</option>
+                            <option value="Non-Benefit (Syariah)">Non-Benefit (Syariah)</option>
+                            <option value="Non-Benefit (DPLK)">Non-Benefit (DPLK)</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-semibold text-gray-600 dark:text-neutral-300 mb-1">Canonical Column Name</label>
+                        <input type="text" id="aliasEditCanonical" placeholder="e.g., Accidental Death Benefit"
+                            class="w-full border dark:border-neutral-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-blue-500 font-semibold">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-neutral-300 mb-1">Aliases (pisahkan dengan koma)</label>
+                    <input type="text" id="aliasEditAliases" placeholder="e.g., ADB, Accident Death, Manfaat Kecelakaan"
+                        class="w-full border dark:border-neutral-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-600 dark:text-neutral-300 mb-1">Description (opsional)</label>
+                    <input type="text" id="aliasEditDesc" placeholder="Keterangan singkat di sheet Config..."
+                        class="w-full border dark:border-neutral-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="flex justify-end gap-2 pt-1">
+                    <button type="button" onclick="closeAliasEditorForm()"
+                        class="px-3 py-1.5 rounded-lg border dark:border-neutral-600 text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 font-semibold">Cancel</button>
+                    <button type="button" id="btnSaveAliasEntry" onclick="saveAliasManagerEntry()"
+                        class="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold flex items-center gap-1.5 shadow-sm">
+                        <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Alias
+                    </button>
+                </div>
+            </div>
+
+            <div id="aliasManagerList" class="p-3 sm:p-4 overflow-y-auto flex-1 space-y-2 text-xs"></div>
+
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-neutral-900/60 border-t dark:border-neutral-700 flex justify-between items-center gap-2 text-[11px] text-gray-500 dark:text-neutral-400">
+                <span id="aliasManagerCountInfo">Loading...</span>
+                <button type="button" onclick="closeAliasManagerModal()"
+                    class="modal-touch-btn px-4 py-2 border dark:border-neutral-600 rounded-lg text-xs font-semibold text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-700">Close</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Modal Admin: Manage Users & Roles (RBAC) -->
+    <dialog id="adminUsersModal" closedby="closerequest" aria-labelledby="adminUsersTitle"
+        class="idcm-native-dialog fixed inset-0 w-screen h-screen bg-transparent z-[68] hidden flex items-center justify-center p-2.5 sm:p-4">
+        <div
+            class="bg-white dark:bg-neutral-800 rounded-2xl w-full max-w-2xl max-h-[90dvh] sm:max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-neutral-700">
+            <div class="p-3 sm:p-4 bg-slate-800 dark:bg-neutral-900 text-white flex justify-between items-center gap-2">
+                <h3 id="adminUsersTitle" class="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0 truncate">
+                    <i class="fa-solid fa-users-gear text-amber-400 shrink-0" aria-hidden="true"></i> Manage Users &amp; Roles (Admin)
+                </h3>
+                <button type="button" onclick="closeAdminUsersModal()" aria-label="Close user manager"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-300 hover:text-white hover:bg-neutral-700 text-xl leading-none shrink-0">&times;</button>
+            </div>
+            <div class="px-3 sm:px-4 py-2.5 bg-amber-50/70 dark:bg-neutral-900/70 border-b dark:border-neutral-700 text-[11px] text-gray-700 dark:text-neutral-300">
+                <strong>Viewer:</strong> lihat, filter, compare &amp; download &bull; <strong>Editor:</strong> + tambah/edit produk &amp; upload dokumen &bull; <strong>Admin:</strong> akses penuh (hapus, config, kelola user). Mengubah role otomatis me-logout sesi aktif user tersebut.
+            </div>
+            <div id="adminUsersList" class="p-3 sm:p-4 overflow-y-auto flex-1 space-y-2 text-xs"></div>
+            <div class="p-3 sm:p-4 bg-gray-50 dark:bg-neutral-900/60 border-t dark:border-neutral-700 flex justify-between items-center gap-2 text-[11px] text-gray-500 dark:text-neutral-400">
+                <span id="adminUsersCountInfo">Loading...</span>
+                <button type="button" onclick="closeAdminUsersModal()"
+                    class="modal-touch-btn px-4 py-2 border dark:border-neutral-600 rounded-lg text-xs font-semibold text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-700">Close</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Modal Confirm Sensitive Admin Role Change (Password Re-Verification) -->
+    <dialog id="adminRoleConfirmModal" closedby="closerequest" aria-labelledby="adminRoleConfirmTitle"
+        class="idcm-native-dialog fixed inset-0 w-screen h-screen bg-transparent z-[72] hidden flex items-center justify-center p-2.5 sm:p-4">
+        <div
+            class="bg-white dark:bg-neutral-800 rounded-2xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden border border-transparent dark:border-neutral-700">
+            <div class="p-3 sm:p-4 bg-amber-600 dark:bg-neutral-900 dark:border-b dark:border-neutral-700 text-white flex justify-between items-center gap-2">
+                <h3 id="adminRoleConfirmTitle" class="font-bold text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-amber-200 dark:text-amber-400" aria-hidden="true"></i> Confirm Role Change
+                </h3>
+                <button type="button" onclick="cancelAdminRoleConfirm()" aria-label="Close confirmation"
+                    class="w-8 h-8 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-black/10 dark:hover:bg-neutral-700 text-lg leading-none">&times;</button>
+            </div>
+            <form onsubmit="submitAdminRoleConfirm(event)" class="p-4 space-y-3 text-xs">
+                <p id="adminRoleConfirmSummary" class="text-gray-700 dark:text-neutral-200 leading-relaxed"></p>
+                <div>
+                    <label for="adminRoleConfirmPassword" class="block text-[11px] font-semibold text-gray-600 dark:text-neutral-300 mb-1">
+                        Enter YOUR Admin password to confirm:
+                    </label>
+                    <div class="relative">
+                        <input type="password" id="adminRoleConfirmPassword" required autocomplete="current-password"
+                            placeholder="Your Admin password..."
+                            class="w-full pr-9 px-3 py-2 border dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-amber-500">
+                        <button type="button" onclick="toggleAuthPasswordVisibility('adminRoleConfirmPassword', this)"
+                            aria-label="Toggle password visibility"
+                            class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <p id="adminRoleConfirmError" class="hidden text-[11px] font-semibold text-red-600 dark:text-red-400"></p>
+                <div class="flex justify-end gap-2 pt-1">
+                    <button type="button" onclick="cancelAdminRoleConfirm()"
+                        class="px-3.5 py-2 border dark:border-neutral-600 rounded-lg font-semibold text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700">Cancel</button>
+                    <button type="submit" id="btnSubmitAdminRoleConfirm"
+                        class="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold flex items-center gap-1.5 shadow-sm">
+                        <i class="fa-solid fa-check" aria-hidden="true"></i> Confirm Role
+                    </button>
+                </div>
+            </form>
         </div>
     </dialog>
 
@@ -3540,7 +3937,7 @@
             if (!imgSrc) return;
             try {
                 if (!navigator.clipboard || !window.ClipboardItem) {
-                    alert("Your browser does not support ClipboardItem for copying images directly. Please right-click on the image and select 'Copy Image'.");
+                    showToast("Your browser does not support ClipboardItem for copying images directly. Please right-click on the image and select 'Copy Image'.");
                     return;
                 }
 
@@ -3588,7 +3985,7 @@
                 }
             } catch (err) {
                 console.error("Failed to copy image to clipboard:", err);
-                alert("Failed to copy image to clipboard. Please make sure your browser allows clipboard access.");
+                showToast("Failed to copy image to clipboard. Please make sure your browser allows clipboard access.");
             }
         }
 
@@ -3604,7 +4001,7 @@
 
             try {
                 if (!navigator.clipboard || !navigator.clipboard.read) {
-                    alert("Your browser does not support automatic clipboard reading. Please click the text box and press Ctrl+V.");
+                    showToast("Your browser does not support automatic clipboard reading. Please click the text box and press Ctrl+V.");
                     return;
                 }
 
@@ -3621,7 +4018,7 @@
                 }
 
                 if (!pasted) {
-                    alert("No image found in your clipboard.\n\nTip: Copy an image or table screenshot first (Win + Shift + S or Copy Image), then click 'Paste Image' again or press Ctrl+V.");
+                    showToast("No image found in your clipboard.\n\nTip: Copy an image or table screenshot first (Win + Shift + S or Copy Image), then click 'Paste Image' again or press Ctrl+V.");
                 } else {
                     const originalHTML = btnEl.innerHTML;
                     btnEl.innerHTML = `<i class="fa-solid fa-check text-emerald-300"></i> Pasted!`;
@@ -3631,7 +4028,7 @@
                 }
             } catch (err) {
                 console.warn("Clipboard read error:", err);
-                alert("Clipboard read access is restricted by your browser. Please click the text box and press Ctrl+V.");
+                showToast("Clipboard read access is restricted by your browser. Please click the text box and press Ctrl+V.");
             }
         }
 
@@ -5056,6 +5453,7 @@
             const sessionData = {
                 username: userObj.username,
                 email: userObj.email || "",
+                role: String(userObj.role || "viewer").trim().toLowerCase(),
                 sessionToken: String(sessionToken || ""),
                 loginAt: Date.now(),
                 expiresAt: serverExpiresAt ? Number(serverExpiresAt) : (Date.now() + durationMs)
@@ -5150,6 +5548,7 @@
                 navContainer.classList.add("flex");
             }
 
+            applyRoleBasedUI();
             updateStickyFilterPosition();
             if (products.length === 0) {
                 fetchAllSheetData();
@@ -6733,7 +7132,7 @@
                 }
             } catch (err) {
                 console.error("Failed to export comparison Excel:", err);
-                alert("An error occurred while exporting the Excel file: " + err.message);
+                showToast("An error occurred while exporting the Excel file: " + err.message);
             } finally {
                 if (exportBtn) {
                     exportBtn.disabled = false;
@@ -7498,16 +7897,16 @@
 
             const sheetName = sheetConfigModalState.sheetName.trim();
             if (!sheetName) {
-                alert("Please enter a Sheet / Category Name.");
+                showToast("Please enter a Sheet / Category Name.");
                 document.getElementById("cfgSheetNameInput")?.focus();
                 return;
             }
             if (/^(config|users|documents)$/i.test(sheetName)) {
-                alert(`"${sheetName}" is a reserved system sheet name. Please choose another name.`);
+                showToast(`"${sheetName}" is a reserved system sheet name. Please choose another name.`);
                 return;
             }
             if (sheetConfigModalState.mode === "new" && SHEET_TABS.some(t => t.toLowerCase() === sheetName.toLowerCase())) {
-                alert(`Sheet "${sheetName}" already exists. Use "Edit Category" to modify its provisions or sections.`);
+                showToast(`Sheet "${sheetName}" already exists. Use "Edit Category" to modify its provisions or sections.`);
                 return;
             }
 
@@ -7523,12 +7922,12 @@
             for (const sec of sheetConfigModalState.productSections) {
                 const title = sec.title.trim();
                 if (!title) {
-                    alert("Please fill in Section Title for every Product Section.");
+                    showToast("Please fill in Section Title for every Product Section.");
                     return;
                 }
                 const items = sec.itemsText.split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean);
                 if (sec.mode === "checklist" && items.length === 0) {
-                    alert(`Section "${title}" uses Checklist mode. Please provide at least 1 preset item.`);
+                    showToast(`Section "${title}" uses Checklist mode. Please provide at least 1 preset item.`);
                     return;
                 }
                 cleanedSections.push({ title, mode: sec.mode, items });
@@ -7611,7 +8010,7 @@
                 filterData();
             } catch (err) {
                 console.error("saveSheetCategoryConfig error:", err);
-                alert("Failed to save Sheet / Category configuration: " + (err.message || err));
+                showToast("Failed to save Sheet / Category configuration: " + (err.message || err));
             } finally {
                 if (btnSave) {
                     btnSave.disabled = false;
@@ -7811,19 +8210,19 @@
 
                     if (!nameVal && !descVal && !hasAttachedImgs) continue;
                     if (!nameVal && (descVal || hasAttachedImgs)) {
-                        alert(`Please fill in '${g.nameFieldLabel}' for every description or image added.`);
+                        showToast(`Please fill in '${g.nameFieldLabel}' for every description or image added.`);
                         nameInput.focus();
                         return false;
                     }
                     if (nameVal && !descVal && !hasAttachedImgs) {
-                        alert(`Please fill in description or attach an image for ${g.kindLabel} "${nameVal}" before saving.`);
+                        showToast(`Please fill in description or attach an image for ${g.kindLabel} "${nameVal}" before saving.`);
                         descInput.focus();
                         return false;
                     }
                     if (g.validateFn) {
                         g.validateFn(nameInput);
                         if (nameInput.dataset.status === "duplicate") {
-                            alert(`${g.kindLabel} "${nameVal}" is invalid or already exists in this form. Please check again.`);
+                            showToast(`${g.kindLabel} "${nameVal}" is invalid or already exists in this form. Please check again.`);
                             nameInput.focus();
                             return false;
                         }
@@ -7837,7 +8236,7 @@
                 const chk = row.querySelector('.dplk-benefit-chk');
                 const customNameEl = row.querySelector('.dplk-custom-benefit-name');
                 if (chk && chk.checked && customNameEl && !customNameEl.value.trim()) {
-                    alert("Please fill in the item name for every checked custom checklist item.");
+                    showToast("Please fill in the item name for every checked custom checklist item.");
                     customNameEl.focus();
                     return false;
                 }
@@ -8318,8 +8717,14 @@
                 }
             }
 
-            btnToggleEdit.classList.remove("hidden");
-            if (btnDelSingle) btnDelSingle.classList.remove("hidden");
+            if (canEditData()) {
+                btnToggleEdit.classList.remove("hidden");
+            } else {
+                btnToggleEdit.classList.add("hidden");
+            }
+            if (btnDelSingle) {
+                btnDelSingle.classList.toggle("hidden", !isAdminUser());
+            }
             renderDetailBodyView(p);
             scheduleHydrateDriveImages();
         }
@@ -8569,10 +8974,10 @@
                                 ${!isDocumentsLoaded ? `<i class="fa-solid fa-spinner fa-spin me-1"></i>Loading...` : `${pDocs.length} file${pDocs.length === 1 ? '' : 's'}`}
                             </span>
                         </h4>
-                        <button type="button" onclick="openSingleDocUploadModal('${safeName}')"
+                        ${canEditData() ? `<button type="button" onclick="openSingleDocUploadModal('${safeName}')"
                             class="modal-touch-btn text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition flex items-center gap-1.5 shadow-sm">
                             <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i> Upload Document
-                        </button>
+                        </button>` : ''}
                     </div>
                     ${!isDocumentsLoaded ? `
                         <div class="p-4 border border-dashed border-gray-300 dark:border-neutral-700 rounded-xl text-center text-xs text-gray-500 dark:text-neutral-400 bg-gray-50/50 dark:bg-neutral-800/40">
@@ -8615,9 +9020,9 @@
                                             <button type="button" onclick="downloadDocumentDirect('${safeFileId}', '${safeFileNameJs}', this, '${safeDownloadUrlJs}')" class="modal-touch-btn px-2.5 py-1.5 sm:py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 disabled:opacity-60 transition flex items-center gap-1" title="Download Original File Directly">
                                                 <i class="fa-solid fa-download text-[10px]" aria-hidden="true"></i> <span>Download</span>
                                             </button>
-                                            <button type="button" onclick="deleteSingleProductDoc('${safeFileId}', '${safeName}')" aria-label="Delete Document" class="modal-touch-btn w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Delete Document">
+                                            ${isAdminUser() ? `<button type="button" onclick="deleteSingleProductDoc('${safeFileId}', '${safeName}')" aria-label="Delete Document" class="modal-touch-btn w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition" title="Delete Document">
                                                 <i class="fa-solid fa-trash-can text-xs" aria-hidden="true"></i>
-                                            </button>
+                                            </button>` : ''}
                                         </div>
                                     </div>
                                 `;
@@ -9158,7 +9563,7 @@
                 pendingAttachmentUploads.set(itemEl, uploadPromise);
             } catch (err) {
                 console.error("Failed to process attached image:", err);
-                alert("Failed to read image file. Please make sure the image format is valid (PNG/JPG/WebP).");
+                showToast("Failed to read image file. Please make sure the image format is valid (PNG/JPG/WebP).");
             }
         }
 
@@ -9778,17 +10183,17 @@
             // Validate Product Name & Category first
             const { validName, validCategory } = validateEditProductIdentity();
             if (!validCategory) {
-                alert(`Invalid product category! Please make sure the category is one of: ${SHEET_TABS.join(", ")}.`);
+                showToast(`Invalid product category! Please make sure the category is one of: ${SHEET_TABS.join(", ")}.`);
                 if (catInput) catInput.focus();
                 return;
             }
             if (!validName) {
-                alert("Product name is invalid or already used by another product. Please check again.");
+                showToast("Product name is invalid or already used by another product. Please check again.");
                 if (nameInput) nameInput.focus();
                 return;
             }
             if (!compInput.value.trim()) {
-                alert("Please fill in 'Company Name' first.");
+                showToast("Please fill in 'Company Name' first.");
                 compInput.focus();
                 return;
             }
@@ -9845,7 +10250,7 @@
 
             const oversizedEdit = findOversizedCells(masterSchema, rowData);
             if (oversizedEdit.length > 0) {
-                alert(`Failed to save: the following columns exceed Google Sheets' 50,000-character limit per cell:\n- ${oversizedEdit.join("\n- ")}\n\nPlease shorten the text or use smaller images.`);
+                showToast(`Failed to save: the following columns exceed Google Sheets' 50,000-character limit per cell:\n- ${oversizedEdit.join("\n- ")}\n\nPlease shorten the text or use smaller images.`);
                 btnSave.disabled = false;
                 btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Save Changes`;
                 return;
@@ -9895,7 +10300,7 @@
             } catch (err) {
                 console.error(err);
                 if (!err || err.code !== "UNAUTHORIZED") {
-                    alert("Failed to update data to Google Sheets. Please check your internet connection.");
+                    showToast("Failed to update data to Google Sheets. Please check your internet connection.");
                 }
                 btnSave.disabled = false;
                 btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Save Changes`;
@@ -10313,24 +10718,24 @@
             const compName = compNameInput.value.trim();
 
             if (!validateManualCategoryAndToggleSyariah()) {
-                alert(`Invalid product category! Please choose one of: ${SHEET_TABS.join(", ")}.`);
+                showToast(`Invalid product category! Please choose one of: ${SHEET_TABS.join(", ")}.`);
                 return;
             }
 
             if (!prodName) {
-                alert("Please fill in 'Product Name' first.");
+                showToast("Please fill in 'Product Name' first.");
                 prodNameInput.focus();
                 return;
             }
 
             if (!validateManualProductName(prodNameInput)) {
-                alert(`Product "${prodName}" already exists in the database. Please use the Edit Product feature to modify its data.`);
+                showToast(`Product "${prodName}" already exists in the database. Please use the Edit Product feature to modify its data.`);
                 prodNameInput.focus();
                 return;
             }
 
             if (!compName) {
-                alert("Please fill in 'Company Name' first.");
+                showToast("Please fill in 'Company Name' first.");
                 compNameInput.focus();
                 return;
             }
@@ -10372,7 +10777,7 @@
 
             const oversizedManual = findOversizedCells(masterSchema, rowData);
             if (oversizedManual.length > 0) {
-                alert(`Failed to save: the following columns exceed Google Sheets' 50,000-character limit per cell:\n- ${oversizedManual.join("\n- ")}\n\nPlease shorten the text or use smaller images.`);
+                showToast(`Failed to save: the following columns exceed Google Sheets' 50,000-character limit per cell:\n- ${oversizedManual.join("\n- ")}\n\nPlease shorten the text or use smaller images.`);
                 btnSave.disabled = false;
                 btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Save New Product`;
                 return;
@@ -10412,7 +10817,7 @@
             } catch (err) {
                 console.error(err);
                 if (!err || err.code !== "UNAUTHORIZED") {
-                    alert("Failed to save new product to Google Sheets. Please check your internet connection.");
+                    showToast("Failed to save new product to Google Sheets. Please check your internet connection.");
                 }
                 btnSave.disabled = false;
                 btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Save New Product`;
@@ -10682,7 +11087,7 @@
             } catch (err) {
                 console.error(err);
                 if (!err || err.code !== "UNAUTHORIZED") {
-                    alert("Failed to delete products from Google Sheets. Please check your internet connection.");
+                    showToast("Failed to delete products from Google Sheets. Please check your internet connection.");
                 }
                 btnExec.disabled = false;
                 btnExec.innerHTML = `<i class="fa-solid fa-trash-can"></i> Yes, Delete Permanently`;
@@ -12197,6 +12602,38 @@
             refreshUploadSubmitState();
         }
 
+        let benefitReviewShowPendingOnly = false;
+
+        function toggleBenefitReviewPendingOnly() {
+            benefitReviewShowPendingOnly = !benefitReviewShowPendingOnly;
+            applyBenefitReviewVisibilityFilter();
+        }
+
+        function applyBenefitReviewVisibilityFilter() {
+            let pendingCount = 0;
+            benefitReviewItems.forEach((item, idx) => {
+                const isValid = evaluateBenefitReviewItem(item).valid;
+                if (!isValid) pendingCount++;
+                const cardEl = document.getElementById(`benefitReviewCard_${idx}`);
+                if (cardEl) {
+                    cardEl.classList.toggle("hidden", benefitReviewShowPendingOnly && isValid);
+                }
+            });
+
+            const btn = document.getElementById("btnTogglePendingOnlyReview");
+            if (btn) {
+                btn.className = benefitReviewShowPendingOnly
+                    ? "text-[11px] font-bold px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-700 text-white transition flex items-center gap-1 shadow-sm"
+                    : "text-[11px] font-semibold px-2.5 py-1 rounded-md border border-red-300 dark:border-red-700/80 text-red-700 dark:text-red-300 bg-white dark:bg-neutral-800 hover:bg-red-50 dark:hover:bg-neutral-700 transition flex items-center gap-1";
+                btn.innerHTML = `<i class="fa-solid ${benefitReviewShowPendingOnly ? "fa-filter-circle-xmark" : "fa-filter"}"></i> ${benefitReviewShowPendingOnly ? "Showing Pending" : "Pending Only"} (${pendingCount})`;
+            }
+
+            const emptyBanner = document.getElementById("benefitReviewPendingEmpty");
+            if (emptyBanner) {
+                emptyBanner.classList.toggle("hidden", !(benefitReviewShowPendingOnly && pendingCount === 0 && benefitReviewItems.length > 0));
+            }
+        }
+
         function updateBenefitReviewSummary() {
             const el = document.getElementById("benefitReviewSummary");
             if (!el) return;
@@ -12206,6 +12643,7 @@
             el.innerHTML = done === total
                 ? `<i class="fa-solid fa-circle-check me-1"></i>All ${total} item(s) reviewed. Ready to upload.`
                 : `<i class="fa-solid fa-hourglass-half me-1"></i>${done} of ${total} reviewed &mdash; resolve the remaining card(s) to enable upload.`;
+            applyBenefitReviewVisibilityFilter();
         }
 
         function bulkSetBenefitReviewMode(mode) {
@@ -12342,6 +12780,9 @@
                     <div class="flex flex-wrap items-center justify-between gap-2">
                         <p class="text-xs font-bold text-amber-700 dark:text-amber-300"><i class="fa-solid fa-list-check me-1"></i>Review ${titleParts.join(" &amp; ")}</p>
                         <div class="flex flex-wrap items-center gap-1.5">
+                            <button type="button" id="btnTogglePendingOnlyReview" onclick="toggleBenefitReviewPendingOnly()" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border border-red-300 dark:border-red-700/80 text-red-700 dark:text-red-300 bg-white dark:bg-neutral-800 hover:bg-red-50 dark:hover:bg-neutral-700 transition flex items-center gap-1" title="Show only unresolved (red) review cards">
+                                <i class="fa-solid fa-filter"></i> Pending Only
+                            </button>
                             <button type="button" onclick="bulkSetBenefitReviewMode('new')" class="text-[11px] font-bold px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-600 text-white transition flex items-center gap-1 shadow-sm" title="Mark all items as New Benefit / New Non-Benefit">
                                 <i class="fa-solid fa-check-double"></i> Select All New
                             </button>
@@ -12357,6 +12798,9 @@
                         Map to an <strong>existing column</strong> (or to another <strong>New</strong> card above), tick <strong>New Benefit / Non-Benefit</strong> to add a new column, or <strong>Ignore</strong> to skip.
                     </p>
                     <p id="benefitReviewSummary"></p>
+                    <div id="benefitReviewPendingEmpty" class="hidden p-3 rounded-lg bg-emerald-50 dark:bg-neutral-800 border border-emerald-200 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-300 text-xs font-semibold text-center">
+                        <i class="fa-solid fa-circle-check me-1"></i>All items resolved! <button type="button" onclick="toggleBenefitReviewPendingOnly()" class="underline ml-1">Show all cards</button>
+                    </div>
                     <div class="space-y-2">${cardsHtml}</div>
                     <datalist id="benefitReviewDatalist"></datalist>
                     <datalist id="nonBenefitReviewDatalist"></datalist>
@@ -12476,6 +12920,7 @@
 
         function resetBenefitReviewState() {
             invalidateReviewLookupCaches();
+            benefitReviewShowPendingOnly = false;
             benefitReviewItems = [];
             benefitReviewDecisions = {};
             uploadParsedSchema = [];
@@ -13544,7 +13989,468 @@
                 submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Try Again`;
             }
         }
+        // ====================================================
+        // CONFIG ALIAS MANAGER (LIHAT, TAMBAH, EDIT, HAPUS ALIAS BENEFIT & NON-BENEFIT)
+        // ====================================================
+        let aliasManagerEntries = [];
+        let aliasManagerFilterType = "all";
+
+        async function openAliasManagerModal() {
+            const modal = document.getElementById("aliasManagerModal");
+            if (!modal) return;
+            modal.classList.remove("hidden");
+            closeAliasEditorForm();
+            const searchEl = document.getElementById("aliasManagerSearch");
+            if (searchEl) searchEl.value = "";
+            setAliasManagerFilter("all", false);
+
+            const listEl = document.getElementById("aliasManagerList");
+            const infoEl = document.getElementById("aliasManagerCountInfo");
+            if (listEl) {
+                listEl.innerHTML = `<div class="py-10 text-center text-gray-500 dark:text-neutral-400"><i class="fa-solid fa-circle-notch fa-spin text-lg text-blue-500 mb-2"></i><p>Loading aliases from Config...</p></div>`;
+            }
+            if (infoEl) infoEl.textContent = "Loading...";
+
+            try {
+                const res = await postAuthenticatedAppsScript({ action: "manage_benefit_aliases", op: "list" });
+                aliasManagerEntries = Array.isArray(res.entries) ? res.entries : [];
+                renderAliasManagerList();
+            } catch (err) {
+                console.error("Failed to load aliases:", err);
+                if (!err || err.code !== "UNAUTHORIZED") {
+                    if (listEl) {
+                        listEl.innerHTML = `<div class="py-8 text-center text-red-500 font-semibold"><i class="fa-solid fa-circle-xmark me-1"></i>Failed to load aliases from server.</div>`;
+                    }
+                    showToast("Failed to load aliases from Config.", "error");
+                }
+            }
+        }
+
+        function closeAliasManagerModal() {
+            const modal = document.getElementById("aliasManagerModal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        function setAliasManagerFilter(type, rerender = true) {
+            aliasManagerFilterType = type;
+            const activeCls = "px-2.5 py-1.5 bg-blue-600 text-white transition";
+            const inactiveCls = "px-2.5 py-1.5 bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 transition";
+            const btnAll = document.getElementById("aliasFilterAll");
+            const btnBen = document.getElementById("aliasFilterBenefit");
+            const btnNb = document.getElementById("aliasFilterNonBenefit");
+            if (btnAll) btnAll.className = type === "all" ? activeCls : inactiveCls;
+            if (btnBen) btnBen.className = type === "benefit" ? activeCls : inactiveCls;
+            if (btnNb) btnNb.className = type === "non-benefit" ? activeCls : inactiveCls;
+            if (rerender) renderAliasManagerList();
+        }
+
+        function renderAliasManagerList() {
+            const listEl = document.getElementById("aliasManagerList");
+            const infoEl = document.getElementById("aliasManagerCountInfo");
+            if (!listEl) return;
+
+            const q = String(document.getElementById("aliasManagerSearch")?.value || "").trim().toLowerCase();
+            const filtered = aliasManagerEntries.filter(entry => {
+                if (aliasManagerFilterType !== "all" && entry.groupKey !== aliasManagerFilterType) return false;
+                if (!q) return true;
+                return entry.canonical.toLowerCase().includes(q)
+                    || entry.entryType.toLowerCase().includes(q)
+                    || (entry.aliases || []).some(a => a.toLowerCase().includes(q));
+            });
+
+            if (infoEl) {
+                infoEl.textContent = `Showing ${filtered.length} of ${aliasManagerEntries.length} Config entries`;
+            }
+
+            if (filtered.length === 0) {
+                listEl.innerHTML = `<div class="py-8 text-center text-gray-400 dark:text-neutral-500">No matching alias entries found.</div>`;
+                return;
+            }
+
+            listEl.innerHTML = filtered.map(entry => {
+                const isNb = entry.groupKey === "non-benefit";
+                const badgeCls = isNb
+                    ? "bg-slate-100 text-slate-700 border-slate-300 dark:bg-neutral-700 dark:text-neutral-200 dark:border-neutral-600"
+                    : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-neutral-700/70 dark:text-blue-300 dark:border-neutral-600";
+                const aliasChips = (entry.aliases || []).length > 0
+                    ? entry.aliases.map(a => `<span class="inline-block text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border border-gray-200 dark:border-neutral-600">${escapeHtml(a)}</span>`).join(" ")
+                    : `<span class="text-[10px] italic text-gray-400 dark:text-neutral-500">No aliases yet</span>`;
+
+                return `
+                    <div class="p-2.5 rounded-xl border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div class="min-w-0 flex-1 space-y-1">
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">${escapeHtml(entry.entryType)}</span>
+                                <span class="font-bold text-gray-900 dark:text-neutral-100 text-xs break-words">${escapeHtml(entry.canonical)}</span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-1">${aliasChips}</div>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                            <button type="button" onclick="openAliasEditorForm(${entry.rowNum})"
+                                class="px-2.5 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-700 font-semibold transition">
+                                <i class="fa-solid fa-pen-to-square me-1" aria-hidden="true"></i>Edit
+                            </button>
+                            <button type="button" onclick="deleteAliasManagerEntry(${entry.rowNum})"
+                                class="px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-800/70 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 font-semibold transition"
+                                title="Delete entry from Config">
+                                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>`;
+            }).join("");
+        }
+
+        function openAliasEditorForm(rowNum) {
+            const box = document.getElementById("aliasEditorFormBox");
+            const titleEl = document.getElementById("aliasEditorFormTitle");
+            const rowInput = document.getElementById("aliasEditRowNum");
+            const typeInput = document.getElementById("aliasEditType");
+            const canonInput = document.getElementById("aliasEditCanonical");
+            const aliasInput = document.getElementById("aliasEditAliases");
+            const descInput = document.getElementById("aliasEditDesc");
+            if (!box) return;
+
+            const entry = rowNum ? aliasManagerEntries.find(e => e.rowNum === rowNum) : null;
+            if (entry) {
+                titleEl.textContent = `Edit Alias — ${entry.canonical}`;
+                rowInput.value = String(entry.rowNum);
+                typeInput.value = entry.entryType;
+                canonInput.value = entry.canonical;
+                aliasInput.value = (entry.aliases || []).join(", ");
+                descInput.value = entry.description || "";
+            } else {
+                titleEl.textContent = "Add New Alias Entry";
+                rowInput.value = "";
+                typeInput.value = aliasManagerFilterType === "non-benefit" ? "Non-Benefit" : "Benefit";
+                canonInput.value = "";
+                aliasInput.value = "";
+                descInput.value = "";
+            }
+            box.classList.remove("hidden");
+            canonInput.focus();
+        }
+
+        function closeAliasEditorForm() {
+            const box = document.getElementById("aliasEditorFormBox");
+            if (box) box.classList.add("hidden");
+        }
+
+        function syncClientConfigFromAliasManager(cfg) {
+            if (!cfg) return;
+            if (typeof applyConfigFromAppsScript === "function") {
+                applyConfigFromAppsScript(cfg);
+            }
+            invalidateReviewLookupCaches();
+            invalidateLocalSummaryCache();
+            if (uploadWorkbookCache && selectedUploadSheets.length > 0) {
+                analyzeSelectedUploadSheets();
+            }
+        }
+
+        async function saveAliasManagerEntry() {
+            const rowNum = parseInt(document.getElementById("aliasEditRowNum")?.value || "0", 10) || 0;
+            const entryType = document.getElementById("aliasEditType")?.value || "Benefit";
+            const canonical = String(document.getElementById("aliasEditCanonical")?.value || "").trim();
+            const aliases = String(document.getElementById("aliasEditAliases")?.value || "").trim();
+            const description = String(document.getElementById("aliasEditDesc")?.value || "").trim();
+
+            if (!canonical) {
+                showToast("Please enter a Canonical Column Name.", "warning");
+                return;
+            }
+
+            const btn = document.getElementById("btnSaveAliasEntry");
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Saving...`;
+            }
+
+            try {
+                const res = await postAuthenticatedAppsScript({
+                    action: "manage_benefit_aliases",
+                    op: "upsert",
+                    rowNum: rowNum || undefined,
+                    entryType,
+                    canonical,
+                    aliases,
+                    description
+                });
+                aliasManagerEntries = Array.isArray(res.entries) ? res.entries : [];
+                syncClientConfigFromAliasManager(res.config);
+                closeAliasEditorForm();
+                renderAliasManagerList();
+                showToast(`Alias "${canonical}" saved to Config.`, "success");
+            } catch (err) {
+                console.error("Failed to save alias:", err);
+                if (!err || err.code !== "UNAUTHORIZED") {
+                    showToast("Failed to save alias: " + (err.message || err), "error");
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = `<i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Alias`;
+                }
+            }
+        }
+
+        async function deleteAliasManagerEntry(rowNum) {
+            const entry = aliasManagerEntries.find(e => e.rowNum === rowNum);
+            if (!entry) return;
+            if (!confirm(`Delete "${entry.canonical}" (${entry.entryType}) and its aliases from Config?`)) return;
+
+            try {
+                const res = await postAuthenticatedAppsScript({
+                    action: "manage_benefit_aliases",
+                    op: "delete",
+                    rowNum: entry.rowNum,
+                    canonical: entry.canonical
+                });
+                aliasManagerEntries = Array.isArray(res.entries) ? res.entries : [];
+                syncClientConfigFromAliasManager(res.config);
+                renderAliasManagerList();
+                showToast(`Deleted "${entry.canonical}" from Config.`, "success");
+            } catch (err) {
+                console.error("Failed to delete alias:", err);
+                if (!err || err.code !== "UNAUTHORIZED") {
+                    showToast("Failed to delete alias: " + (err.message || err), "error");
+                }
+            }
+        }
+        // ====================================================
+        // ADMIN PANEL: MANAGE USERS & ROLES (RBAC)
+        // ====================================================
+        let adminUsersEntries = [];
+        let pendingAdminRoleChange = null;
+
+        async function openAdminUsersModal() {
+            if (!isAdminUser()) {
+                showToast("Akses ditolak: hanya Admin yang dapat mengelola user.", "error");
+                return;
+            }
+            const modal = document.getElementById("adminUsersModal");
+            if (!modal) return;
+            modal.classList.remove("hidden");
+            const listEl = document.getElementById("adminUsersList");
+            const infoEl = document.getElementById("adminUsersCountInfo");
+            if (listEl) {
+                listEl.innerHTML = `<div class="py-10 text-center text-gray-500 dark:text-neutral-400"><i class="fa-solid fa-circle-notch fa-spin text-lg text-amber-500 mb-2"></i><p>Loading registered users...</p></div>`;
+            }
+            if (infoEl) infoEl.textContent = "Loading...";
+
+            try {
+                const res = await postAuthenticatedAppsScript({ action: "admin_manage_users", op: "list" });
+                adminUsersEntries = Array.isArray(res.users) ? res.users : [];
+                renderAdminUsersList();
+            } catch (err) {
+                console.error("Failed to load users:", err);
+                if (!err || (err.code !== "UNAUTHORIZED" && err.code !== "FORBIDDEN")) {
+                    if (listEl) listEl.innerHTML = `<div class="py-8 text-center text-red-500 font-semibold">Failed to load users.</div>`;
+                    showToast("Failed to load registered users.", "error");
+                }
+            }
+        }
+
+        function closeAdminUsersModal() {
+            const modal = document.getElementById("adminUsersModal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        function renderAdminUsersList() {
+            const listEl = document.getElementById("adminUsersList");
+            const infoEl = document.getElementById("adminUsersCountInfo");
+            if (!listEl) return;
+
+            const currentSession = typeof getActiveAuthSession === "function" ? getActiveAuthSession() : null;
+            const meLower = String((currentSession && currentSession.username) || "").trim().toLowerCase();
+            const adminCount = adminUsersEntries.filter(u => u.role === "admin").length;
+            if (infoEl) infoEl.textContent = `Total ${adminUsersEntries.length} user(s)`;
+
+            if (adminUsersEntries.length === 0) {
+                listEl.innerHTML = `<div class="py-8 text-center text-gray-400 dark:text-neutral-500">No users found.</div>`;
+                return;
+            }
+
+            const cardsHtml = adminUsersEntries.map(u => {
+                const isMe = u.username.toLowerCase() === meLower;
+                const isSoleAdmin = u.role === "admin" && adminCount <= 1;
+                const safeUserJs = u.username.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                return `
+                    <div class="p-2.5 rounded-xl border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <span class="font-bold text-gray-900 dark:text-neutral-100">${escapeHtml(u.username)}</span>
+                                ${isMe ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold">You</span>` : ""}
+                            </div>
+                            <div class="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">Last login: ${escapeHtml(u.lastLogin || "-")}</div>
+                            ${isSoleAdmin ? `<div class="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5"><i class="fa-solid fa-lock me-1" aria-hidden="true"></i>Cannot demote the only Admin account. Promote another user to Admin first.</div>` : ""}
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                            <select ${isSoleAdmin ? "disabled" : ""} onchange="requestAdminUserRoleChange('${safeUserJs}', this.value)" aria-label="Role for ${escapeHtmlAttr(u.username)}"
+                                title="${isSoleAdmin ? "Cannot demote the only Admin account" : "Change user role"}"
+                                class="border dark:border-neutral-600 rounded-lg px-2 py-1 text-xs font-semibold bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-60 disabled:cursor-not-allowed">
+                                <option value="viewer" ${u.role === "viewer" ? "selected" : ""}>Viewer</option>
+                                <option value="editor" ${u.role === "editor" ? "selected" : ""}>Editor</option>
+                                <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+                            </select>
+                            ${!isMe ? `<button type="button" onclick="deleteAdminUser('${safeUserJs}')" aria-label="Delete user ${escapeHtmlAttr(u.username)}"
+                                class="px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-800/70 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 font-semibold transition" title="Delete User & Revoke Sessions">
+                                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                            </button>` : ""}
+                        </div>
+                    </div>`;
+            }).join("");
+
+            const onlySelf = adminUsersEntries.length === 1 && adminUsersEntries[0].username.toLowerCase() === meLower;
+            listEl.innerHTML = cardsHtml + (onlySelf
+                ? `<div class="mt-2 p-3 rounded-xl border border-dashed border-gray-300 dark:border-neutral-700 text-center text-[11px] text-gray-500 dark:text-neutral-400">No other users registered yet. New accounts signing up with the Invite Code will appear here as <strong>Viewer</strong>.</div>`
+                : "");
+        }
+
+        function requestAdminUserRoleChange(username, nextRole) {
+            const target = adminUsersEntries.find(u => u.username.toLowerCase() === String(username || "").toLowerCase());
+            if (!target || target.role === nextRole) {
+                renderAdminUsersList();
+                return;
+            }
+            const adminCount = adminUsersEntries.filter(u => u.role === "admin").length;
+            if (target.role === "admin" && nextRole !== "admin" && adminCount <= 1) {
+                showToast("Cannot demote the only Admin account. Promote another user to Admin first.", "warning");
+                renderAdminUsersList();
+                return;
+            }
+
+            // Opsi 2: Perubahan yang melibatkan role Admin (promote ke Admin / demote Admin / demote diri sendiri) wajib konfirmasi + password Admin
+            const involvesAdmin = (target.role === "admin" || nextRole === "admin");
+            if (involvesAdmin) {
+                pendingAdminRoleChange = { username: target.username, oldRole: target.role, nextRole };
+                const currentSession = typeof getActiveAuthSession === "function" ? getActiveAuthSession() : null;
+                const isSelf = currentSession && currentSession.username.toLowerCase() === target.username.toLowerCase();
+                const actionWord = nextRole === "admin" ? "promote" : "demote";
+                const summaryEl = document.getElementById("adminRoleConfirmSummary");
+                if (summaryEl) {
+                    summaryEl.innerHTML = `Are you sure you want to <strong>${actionWord}</strong> <strong>${escapeHtml(target.username)}${isSelf ? " (You)" : ""}</strong> from <span class="uppercase font-bold">${escapeHtml(target.role)}</span> &rarr; <span class="uppercase font-bold">${escapeHtml(nextRole)}</span>?`
+                        + (isSelf ? `<br><span class="text-[11px] text-amber-600 dark:text-amber-400">You will be signed out immediately after demoting yourself.</span>` : "");
+                }
+                const pwdEl = document.getElementById("adminRoleConfirmPassword");
+                if (pwdEl) { pwdEl.value = ""; pwdEl.type = "password"; }
+                const errEl = document.getElementById("adminRoleConfirmError");
+                if (errEl) { errEl.textContent = ""; errEl.classList.add("hidden"); }
+                const modal = document.getElementById("adminRoleConfirmModal");
+                if (modal) modal.classList.remove("hidden");
+                setTimeout(() => { if (pwdEl) pwdEl.focus(); }, 50);
+                return;
+            }
+
+            executeAdminUserRoleChange(target.username, nextRole, "");
+        }
+
+        function cancelAdminRoleConfirm() {
+            pendingAdminRoleChange = null;
+            const modal = document.getElementById("adminRoleConfirmModal");
+            if (modal) modal.classList.add("hidden");
+            const pwdEl = document.getElementById("adminRoleConfirmPassword");
+            if (pwdEl) pwdEl.value = "";
+            renderAdminUsersList();
+        }
+
+        async function submitAdminRoleConfirm(e) {
+            e.preventDefault();
+            if (!pendingAdminRoleChange) return;
+            const pwdEl = document.getElementById("adminRoleConfirmPassword");
+            const errEl = document.getElementById("adminRoleConfirmError");
+            const btn = document.getElementById("btnSubmitAdminRoleConfirm");
+            const adminPassword = pwdEl ? pwdEl.value : "";
+
+            if (!adminPassword) {
+                if (errEl) { errEl.textContent = "Please enter your Admin password."; errEl.classList.remove("hidden"); }
+                return;
+            }
+            if (errEl) { errEl.textContent = ""; errEl.classList.add("hidden"); }
+            if (btn) { btn.disabled = true; btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Verifying...`; }
+
+            const { username, nextRole } = pendingAdminRoleChange;
+            const ok = await executeAdminUserRoleChange(username, nextRole, adminPassword, (msg) => {
+                if (errEl) { errEl.textContent = msg; errEl.classList.remove("hidden"); }
+            });
+
+            if (btn) { btn.disabled = false; btn.innerHTML = `<i class="fa-solid fa-check" aria-hidden="true"></i> Confirm Role`; }
+            if (ok) {
+                pendingAdminRoleChange = null;
+                const modal = document.getElementById("adminRoleConfirmModal");
+                if (modal) modal.classList.add("hidden");
+                if (pwdEl) pwdEl.value = "";
+            }
+        }
+
+        async function executeAdminUserRoleChange(username, nextRole, adminPassword = "", onInlineError = null) {
+            try {
+                const payload = {
+                    action: "admin_manage_users",
+                    op: "set_role",
+                    username,
+                    role: nextRole
+                };
+                if (adminPassword) payload.adminPassword = adminPassword;
+                const res = await postAuthenticatedAppsScript(payload, { requireSuccess: false });
+                if (!res || res.status !== "success") {
+                    const msg = (res && res.message) || "Failed to update user role.";
+                    if (onInlineError) {
+                        onInlineError(msg);
+                    } else {
+                        showToast(msg, "error");
+                        renderAdminUsersList();
+                    }
+                    return false;
+                }
+                adminUsersEntries = Array.isArray(res.users) ? res.users : [];
+                renderAdminUsersList();
+                showToast(`Role "${username}" updated to ${nextRole.toUpperCase()}.`, "success");
+
+                if (res.selfDemoted) {
+                    closeAdminUsersModal();
+                    localStorage.removeItem(AUTH_STORAGE_KEY);
+                    sessionStorage.removeItem(AUTH_STORAGE_KEY);
+                    clearAllSensitiveClientCaches();
+                    const overlay = document.getElementById("authGateOverlay");
+                    if (overlay) overlay.classList.remove("hidden");
+                    if (typeof showAuthAlert === "function") {
+                        showAuthAlert(`Role Anda telah diubah menjadi ${nextRole.toUpperCase()}. Silakan Sign In kembali.`, "info");
+                    }
+                }
+                return true;
+            } catch (err) {
+                console.error("Failed to update user role:", err);
+                if (!err || (err.code !== "UNAUTHORIZED" && err.code !== "FORBIDDEN")) {
+                    const msg = (err && err.message) || "Failed to update user role.";
+                    if (onInlineError) onInlineError(msg);
+                    else showToast(msg, "error");
+                }
+                if (!onInlineError) renderAdminUsersList();
+                return false;
+            }
+        }
+
+        async function deleteAdminUser(username) {
+            if (!confirm(`Delete user "${username}" and immediately revoke all active sessions?`)) return;
+            try {
+                const res = await postAuthenticatedAppsScript({
+                    action: "admin_manage_users",
+                    op: "delete_user",
+                    username
+                });
+                adminUsersEntries = Array.isArray(res.users) ? res.users : [];
+                renderAdminUsersList();
+                showToast(`User "${username}" deleted.`, "success");
+            } catch (err) {
+                console.error("Failed to delete user:", err);
+                if (!err || (err.code !== "UNAUTHORIZED" && err.code !== "FORBIDDEN")) {
+                    showToast("Failed to delete user: " + (err.message || err), "error");
+                }
+            }
+        }
     </script>
+    <div id="toastRegion" role="region" aria-label="Notifications" popover="manual" class="idcm-toast-region"></div>
+    <div id="toastSrLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 </body>
 
 </html>
