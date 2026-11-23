@@ -128,10 +128,30 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             "July", "August", "September", "October", "November", "December"
         ];
 
+        function excelSerialToDate(serial) {
+            const num = Number(serial);
+            if (!Number.isFinite(num) || num < 20000 || num > 70000) return null;
+            // Excel epoch: 1899-12-30 (offset 25569 hari terhadap Unix epoch 1970-01-01); gunakan UTC agar tidak bergeser ±1 hari karena timezone
+            const utc = new Date(Math.round((num - 25569) * 86400 * 1000));
+            if (isNaN(utc.getTime())) return null;
+            return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+        }
+
         function parseDateValue(dateStr) {
             if (!dateStr || dateStr === "-") return null;
             if (dateStr instanceof Date) return isNaN(dateStr.getTime()) ? null : dateStr;
             const clean = String(dateStr).trim();
+            // Angka serial tanggal Excel (5 digit: mis. 45313 -> 22 Jan 2024, 46054 -> 1 Feb 2026)
+            if (/^\d{5}(?:\.\d+)?$/.test(clean)) {
+                const exDate = excelSerialToDate(parseFloat(clean));
+                if (exDate) return exDate;
+            }
+            // Recovery untuk data lama yang sempat tersimpan sebagai "01-01-46054" atau "46054-01-01"
+            const corruptedSerial = clean.match(/^(?:0?1[-\/]0?1[-\/](\d{5})|(\d{5})[-\/]0?1[-\/]0?1)$/);
+            if (corruptedSerial) {
+                const exDate = excelSerialToDate(parseInt(corruptedSerial[1] || corruptedSerial[2], 10));
+                if (exDate) return exDate;
+            }
             // Google Visualization API Date(yyyy, m, d)
             const gvizDate = clean.match(/^Date\((\d+),\s*(\d+),\s*(\d+)(?:,\s*(\d+),\s*(\d+),\s*(\d+))?\)$/i);
             if (gvizDate) {
@@ -158,6 +178,10 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 const day = parseInt(ymd[3], 10);
                 const d = new Date(year, month, day);
                 return isNaN(d.getTime()) ? null : d;
+            }
+            // Tahun saja (4 digit, mis. "2024")
+            if (/^(19|20)\d{2}$/.test(clean)) {
+                return new Date(parseInt(clean, 10), 0, 1);
             }
             const ts = Date.parse(clean);
             return isNaN(ts) ? null : new Date(ts);
