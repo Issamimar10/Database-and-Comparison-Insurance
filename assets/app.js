@@ -3934,7 +3934,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             { canonical: "Product Type", aliases: ["tipe produk"] },
             { canonical: "Distribution Channel", aliases: ["channel distribution"] },
             { canonical: "Currency", aliases: ["mata uang"] },
-            { canonical: "Launch Date", aliases: ["tanggal rilis", "launching date", "release date"] },
+            { canonical: "Launch Date", aliases: ["tanggal rilis", "launching date", "release date", "estimation launching date", "estimated launching date", "est. launching date", "est launching date"] },
             { canonical: "Remarks", aliases: ["catatan"] }
         ];
         let CORE_FIELD_RULES = DEFAULT_CORE_FIELD_RULES.map(r => ({ canonical: r.canonical, aliases: [...r.aliases] }));
@@ -10304,7 +10304,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                             "product name", "nama produk", "company name", "nama perusahaan", "company",
                             "category system", "par/non par", "product type", "tipe produk",
                             "distribution channel", "channel distribution", "currency", "mata uang",
-                            "launch date", "tanggal rilis", "launching date", "release date", "estimation launching date",
+                            "launch date", "tanggal rilis", "launching date", "release date", "estimation launching date", "estimated launching date", "est. launching date", "est launching date",
                             "entry age", "insured entry age", "age definition",
                             "coverage period", "coverage term",
                             "premium payment period (ppp)", "premium payment period", "premium term", "ppp",
@@ -10425,36 +10425,28 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                             const hasRowBenefitLabel = Boolean(cleanLabel && !isBenefitSectionLabel(lowerLabel));
 
                             if (hasText) {
-                                const extracted = extractBenefitKeyAndValue(val);
                                 if (hasRowBenefitLabel) {
                                     // Nama benefit ada di kolom kiri (misal Format Export Comparison & Format Syariah)
                                     const resolvedRowBen = resolveKnownBenefitName(cleanLabel) || findExistingMasterBenefit(cleanLabel) || cleanLabel;
-                                    if (isUmbrellaBenefitLabel(lowerLabel) && extracted && extracted.key) {
-                                        // Kategori payung (misal "Living Benefit"): gunakan nama spesifik dari dalam sel (Cash Benefit, Manfaat Dana Tahapan, dll.)
-                                        targetBenefitCol = extracted.key;
-                                        benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : val;
-                                    } else if (extracted && extracted.key) {
-                                        const extractedKeyNorm = normalizeBenefitNameKey(extracted.key);
-                                        const rowKeyNorm = normalizeBenefitNameKey(resolvedRowBen);
-                                        const extractedResolved = resolveKnownBenefitName(extracted.key) || findExistingMasterBenefit(extracted.key);
-                                        const sameAsRow = extractedKeyNorm === rowKeyNorm
-                                            || normalizeBenefitNameKey(cleanLabel) === extractedKeyNorm
-                                            || (extractedResolved && normalizeBenefitNameKey(extractedResolved) === rowKeyNorm);
-                                        if (sameAsRow) {
-                                            // Judul di baris 1 sel sama/alias dengan kolom kiri -> potong agar tidak double!
-                                            targetBenefitCol = resolvedRowBen;
-                                            benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : stripDuplicateLeadingBenefitTitle(resolvedRowBen, val, cleanLabel);
-                                        } else {
-                                            // Sub-benefit berbeda di dalam baris (misal "Additional Death Benefit due to Crash" / "SA Booster Benefit")
-                                            targetBenefitCol = extractedResolved || extracted.key;
+                                    if (isUmbrellaBenefitLabel(lowerLabel)) {
+                                        // Kategori payung (misal "Living Benefit" / "Other Benefit"): gunakan nama spesifik dari dalam sel (Cash Benefit, Manfaat Dana Tahapan, dll.)
+                                        const extracted = extractBenefitKeyAndValue(val);
+                                        if (extracted && extracted.key) {
+                                            targetBenefitCol = extracted.key;
                                             benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : val;
+                                        } else {
+                                            targetBenefitCol = resolvedRowBen;
+                                            benefitVal = stripDuplicateLeadingBenefitTitle(resolvedRowBen, val, cleanLabel);
                                         }
                                     } else {
+                                        // Kolom kiri sudah memuat nama benefit spesifik (misal "Additional Cash Payout", "Death Benefit", "Maturity Benefit")
+                                        // Jangan biarkan deskripsi 1 baris dipecah menjadi nama kolom baru oleh extractBenefitKeyAndValue
                                         targetBenefitCol = resolvedRowBen;
                                         benefitVal = stripDuplicateLeadingBenefitTitle(resolvedRowBen, val, cleanLabel);
                                     }
                                 } else {
                                     // Format Excel vertikal lama (kolom kiri kosong, nama & nilai ada di dalam sel)
+                                    const extracted = extractBenefitKeyAndValue(val);
                                     if (extracted && extracted.key) {
                                         targetBenefitCol = extracted.key;
                                         benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : extracted.key;
@@ -10511,7 +10503,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                                     "product name", "nama produk", "company name", "nama perusahaan", "company",
                                     "par/non par", "product type", "tipe produk",
                                     "distribution channel", "channel distribution", "currency", "mata uang",
-                                    "launch date", "tanggal rilis", "launching date", "release date",
+                                    "launch date", "tanggal rilis", "launching date", "release date", "estimation launching date", "estimated launching date", "est. launching date", "est launching date",
                                     "entry age", "insured entry age", "age definition",
                                     "coverage period", "coverage term",
                                     "premium payment period (ppp)", "premium payment period", "premium term", "ppp",
@@ -10634,7 +10626,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                     if (colName === "Distribution Channel") return getByAliases(getConfigAliasesForColumn("Distribution Channel", ["Channel Distribution"]));
                     if (colName === "Currency") return getByAliases(getConfigAliasesForColumn("Currency", ["Mata Uang"]));
                     if (colName === "Launch Date" || colName === "Tanggal Rilis") {
-                        const rawD = getByAliases(getConfigAliasesForColumn("Launch Date", ["Tanggal Rilis", "Launching Date", "Release Date"]));
+                        const rawD = getByAliases(getConfigAliasesForColumn("Launch Date", ["Tanggal Rilis", "Launching Date", "Release Date", "Estimation Launching Date", "Estimated Launching Date", "Est. Launching Date", "Est Launching Date"]));
                         return rawD !== "-" ? formatDateToDDMMYYYY(rawD) : "-";
                     }
 
