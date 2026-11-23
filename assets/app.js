@@ -9565,13 +9565,26 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
         function onBenefitReviewPickSuggestion(idx, sIdx) {
             const item = benefitReviewItems[idx];
             if (!item || !item.suggestions[sIdx]) return;
+            const pickedName = item.suggestions[sIdx];
             const prev = benefitReviewDecisions[item.key] || {};
             const prevKind = prev.kind || item.detectedKind || "benefit";
+            const nextOverrides = { ...(prev.valueOverrides || {}) };
+            // Jika deskripsi produk belum diedit manual dan baris pertamanya adalah judul duplikat/alias dari nama target baru, bersihkan otomatis
+            if (prevKind === "benefit" && Array.isArray(item.usedBy)) {
+                item.usedBy.forEach(prod => {
+                    if (!prod || Object.prototype.hasOwnProperty.call(nextOverrides, prod.name)) return;
+                    const origText = stripImageTokensForSnippet(prod.value);
+                    const cleaned = stripDuplicateLeadingBenefitTitle(pickedName, origText, item.originalName);
+                    if (cleaned && cleaned !== origText) {
+                        nextOverrides[prod.name] = cleaned;
+                    }
+                });
+            }
             benefitReviewDecisions[item.key] = {
                 mode: "pending",
-                name: item.suggestions[sIdx],
+                name: pickedName,
                 kind: prevKind,
-                valueOverrides: prev.valueOverrides || {},
+                valueOverrides: nextOverrides,
                 activeProdIdx: prev.activeProdIdx || 0
             };
             preserveUploadScroll(() => renderBenefitReview());
@@ -9938,6 +9951,57 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             );
         }
 
+        function normalizeBenefitCoreWords(name) {
+            const stop = new Set(["benefit", "manfaat", "and", "of", "the", "dan"]);
+            return normalizeBenefitNameKey(name)
+                .replace(/&/g, " ")
+                .split(/[^a-z0-9]+/)
+                .filter(w => w && !stop.has(w))
+                .join(" ");
+        }
+
+        function getBenefitAcronyms(name) {
+            const cleaned = normalizeBenefitNameKey(name).replace(/&/g, " ");
+            const allWords = cleaned.split(/[^a-z0-9]+/).filter(Boolean);
+            const stop = new Set(["benefit", "manfaat", "and", "of", "the", "dan"]);
+            const coreWords = allWords.filter(w => !stop.has(w));
+            const out = new Set();
+            if (coreWords.length >= 2) {
+                out.add(coreWords.map(w => w[0]).join(""));
+            }
+            const withBenefitWords = allWords.filter(w => w !== "and" && w !== "the" && w !== "dan");
+            if (withBenefitWords.length >= 2) {
+                out.add(withBenefitWords.map(w => w[0]).join(""));
+            }
+            return out;
+        }
+
+        function isEquivalentBenefitTitle(titleA, titleB) {
+            const keyA = normalizeBenefitNameKey(titleA);
+            const keyB = normalizeBenefitNameKey(titleB);
+            if (!keyA || !keyB) return false;
+            if (keyA === keyB) return true;
+
+            const coreA = normalizeBenefitCoreWords(titleA);
+            const coreB = normalizeBenefitCoreWords(titleB);
+            if (coreA && coreB && coreA === coreB) return true;
+
+            // Cek singkatan/akronim (misal "TPD Benefit" <-> "Total and Permanent Disability", "CI Benefit" <-> "Critical Illness")
+            if (/^[a-z]{2,5}$/.test(coreA) && getBenefitAcronyms(titleB).has(coreA)) return true;
+            if (/^[a-z]{2,5}$/.test(coreB) && getBenefitAcronyms(titleA).has(coreB)) return true;
+
+            // Cek melalui alias Config / nama Master Sheet yang dikenal (termasuk varian dengan/tanpa kata "Benefit")
+            const resolvedA = resolveKnownBenefitName(titleA) || findExistingMasterBenefit(titleA);
+            const resolvedB = resolveKnownBenefitName(titleB) || findExistingMasterBenefit(titleB);
+            const canonA = resolvedA ? normalizeBenefitCoreWords(resolvedA) : coreA;
+            const canonB = resolvedB ? normalizeBenefitCoreWords(resolvedB) : coreB;
+            if (canonA && canonB && canonA === canonB) return true;
+            if (resolvedA && /^[a-z]{2,5}$/.test(coreB) && getBenefitAcronyms(resolvedA).has(coreB)) return true;
+            if (resolvedB && /^[a-z]{2,5}$/.test(coreA) && getBenefitAcronyms(resolvedB).has(coreA)) return true;
+
+            return false;
+        }
+
         function stripDuplicateLeadingBenefitTitle(colName, rawVal, altLabel = "") {
             const text = String(rawVal || "").trim();
             if (!text) return "";
@@ -9945,18 +10009,9 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             if (lines.length < 2) return text;
             const firstLineClean = lines[0].replace(/[:：]\s*$/, "").trim();
             if (!firstLineClean) return text;
-            const firstKey = normalizeBenefitNameKey(firstLineClean);
-            const colKey = normalizeBenefitNameKey(colName);
-            const altKey = altLabel ? normalizeBenefitNameKey(altLabel) : "";
-            const resolvedFirst = resolveKnownBenefitName(firstLineClean);
-            const resolvedCol = resolveKnownBenefitName(colName) || colName;
             if (
-                firstKey &&
-                (
-                    firstKey === colKey ||
-                    (altKey && firstKey === altKey) ||
-                    (resolvedFirst && normalizeBenefitNameKey(resolvedFirst) === normalizeBenefitNameKey(resolvedCol))
-                )
+                isEquivalentBenefitTitle(firstLineClean, colName) ||
+                (altLabel && isEquivalentBenefitTitle(firstLineClean, altLabel))
             ) {
                 const rest = lines.slice(1).join("\n").trim();
                 return rest || text;
