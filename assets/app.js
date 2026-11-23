@@ -10080,6 +10080,14 @@ function stripDuplicateLeadingBenefitTitle(colName, rawVal, altLabel = "") {
     if (lines.length < 2) return text;
     const firstLineClean = lines[0].replace(/[:：]\s*$/, "").trim();
     if (!firstLineClean) return text;
+    // Khusus Living Benefit / kategori payung: jangan potong sub-judul alias (misal "Manfaat Dana Tahapan", "Cash Benefit") karena tiap produk berbeda-beda
+    if (isUmbrellaBenefitLabel(String(colName || "").trim().toLowerCase())) {
+        if (normalizeBenefitNameKey(firstLineClean) === normalizeBenefitNameKey(colName)) {
+            const rest = lines.slice(1).join("\n").trim();
+            return rest || text;
+        }
+        return text;
+    }
     if (
         isEquivalentBenefitTitle(firstLineClean, colName) ||
         (altLabel && isEquivalentBenefitTitle(firstLineClean, altLabel))
