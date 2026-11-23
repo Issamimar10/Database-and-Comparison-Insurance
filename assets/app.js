@@ -1324,6 +1324,9 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                     if (!dialog.classList.contains('hidden')) {
                         dialog.classList.add('hidden');
                     }
+                    if (dialog.id === 'uploadModal' && typeof cleanupUploadModalState === 'function') {
+                        cleanupUploadModalState();
+                    }
                 });
             });
 
@@ -7180,19 +7183,41 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             }
         }
 
-        function openUploadModal() {
-            loadExcelLibs().catch(() => { });
-            document.getElementById("uploadModal").classList.remove("hidden");
-            document.getElementById("excelFileInput").value = "";
-            document.getElementById("uploadPreviewArea").classList.add("hidden");
-            document.getElementById("uploadPreviewArea").replaceChildren();
+        let uploadModalSessionId = 0;
+
+        function cleanupUploadModalState() {
+            uploadModalSessionId++;
+            if (uploadWorkbookCache) {
+                if (Array.isArray(uploadWorkbookCache.baseColumns)) {
+                    dynamicColumns = uploadWorkbookCache.baseColumns.slice();
+                }
+                if (Array.isArray(uploadWorkbookCache.baseNonBenefits)) {
+                    NON_BENEFIT_COLUMNS = uploadWorkbookCache.baseNonBenefits.slice();
+                }
+            }
+            const fileIn = document.getElementById("excelFileInput");
+            if (fileIn) fileIn.value = "";
+            const previewEl = document.getElementById("uploadPreviewArea");
+            if (previewEl) {
+                previewEl.classList.add("hidden");
+                previewEl.replaceChildren();
+            }
             resetUploadSheetSelector();
             resetBenefitReviewState();
             uploadSubmitBaseEnabled = false;
-            const submitBtn = document.getElementById("btnSubmitUpload");
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Sheets`;
             parsedUploadRows = [];
+            parsedDuplicateRows = [];
+            const submitBtn = document.getElementById("btnSubmitUpload");
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Upload to Google Sheets`;
+            }
+        }
+
+        function openUploadModal() {
+            loadExcelLibs().catch(() => { });
+            cleanupUploadModalState();
+            document.getElementById("uploadModal").classList.remove("hidden");
 
             renderManualProductForm();
             switchAddModalTab('excel');
@@ -7201,6 +7226,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
 
         function closeUploadModal() {
             document.getElementById("uploadModal").classList.add("hidden");
+            cleanupUploadModalState();
         }
 
         function switchAddModalTab(mode) {
@@ -8457,6 +8483,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
 
             const file = fileInput.files[0];
             const reader = new FileReader();
+            const mySessionId = ++uploadModalSessionId;
 
             previewArea.innerHTML = `<p class="text-blue-600 dark:text-blue-400 font-medium"><i class="fa-solid fa-spinner fa-spin me-1"></i> Reading data & extracting table images from Excel file...</p>`;
             previewArea.classList.remove("hidden");
@@ -8465,6 +8492,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             reader.onload = async function (e) {
                 try {
                     await loadExcelLibs();
+                    if (mySessionId !== uploadModalSessionId) return;
                     const arrayBuffer = e.target.result;
                     const data = new Uint8Array(arrayBuffer);
                     // Batasi pembacaan maksimal 1000 baris pertama agar file Excel yang memiliki
@@ -8474,6 +8502,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
 
                     // Ekstrak gambar tabel yang tertanam di dalam file .xlsx (jika ada)
                     const excelImagesBySheet = await extractImagesFromXlsxBuffer(arrayBuffer);
+                    if (mySessionId !== uploadModalSessionId) return;
 
                     const baseColumns = dynamicColumns.slice();
                     const baseNonBenefits = NON_BENEFIT_COLUMNS.slice();
@@ -9889,8 +9918,50 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 lowerLabel === "benefit" ||
                 lowerLabel === "benefit(s)" ||
                 lowerLabel === "product benefit" ||
+                lowerLabel === "product benefits" ||
+                lowerLabel === "product benefit(s)" ||
+                lowerLabel === "manfaat produk" ||
+                lowerLabel === "manfaat" ||
                 lowerLabel.startsWith("benefit")
             );
+        }
+
+        function isUmbrellaBenefitLabel(lowerLabel) {
+            if (!lowerLabel) return false;
+            return (
+                lowerLabel === "living benefit" ||
+                lowerLabel === "living benefits" ||
+                lowerLabel === "manfaat hidup" ||
+                lowerLabel === "other benefit" ||
+                lowerLabel === "other benefits" ||
+                lowerLabel === "manfaat lainnya"
+            );
+        }
+
+        function stripDuplicateLeadingBenefitTitle(colName, rawVal, altLabel = "") {
+            const text = String(rawVal || "").trim();
+            if (!text) return "";
+            const lines = text.split(/\r?\n/);
+            if (lines.length < 2) return text;
+            const firstLineClean = lines[0].replace(/[:：]\s*$/, "").trim();
+            if (!firstLineClean) return text;
+            const firstKey = normalizeBenefitNameKey(firstLineClean);
+            const colKey = normalizeBenefitNameKey(colName);
+            const altKey = altLabel ? normalizeBenefitNameKey(altLabel) : "";
+            const resolvedFirst = resolveKnownBenefitName(firstLineClean);
+            const resolvedCol = resolveKnownBenefitName(colName) || colName;
+            if (
+                firstKey &&
+                (
+                    firstKey === colKey ||
+                    (altKey && firstKey === altKey) ||
+                    (resolvedFirst && normalizeBenefitNameKey(resolvedFirst) === normalizeBenefitNameKey(resolvedCol))
+                )
+            ) {
+                const rest = lines.slice(1).join("\n").trim();
+                return rest || text;
+            }
+            return text;
         }
 
         function isChargesSectionLabel(lowerLabel) {
@@ -10229,6 +10300,22 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                         }
 
                         // Perbarui status section berdasarkan label baris
+                        const KNOWN_SPEC_EXIT_LABELS = new Set([
+                            "product name", "nama produk", "company name", "nama perusahaan", "company",
+                            "category system", "par/non par", "product type", "tipe produk",
+                            "distribution channel", "channel distribution", "currency", "mata uang",
+                            "launch date", "tanggal rilis", "launching date", "release date", "estimation launching date",
+                            "entry age", "insured entry age", "age definition",
+                            "coverage period", "coverage term",
+                            "premium payment period (ppp)", "premium payment period", "premium term", "ppp",
+                            "min premium", "premium (iuran)", "iuran", "premium limit", "minimum premium", "premium",
+                            "min sum assured", "sum assured limit", "minimum sum assured", "sum assured",
+                            "underwriting method", "underwriting",
+                            "available riders", "available rider", "riders", "rider", "nfo",
+                            "sales tools", "sales tool", "after sales tools", "after sales tool", "remarks",
+                            ...CORE_FIELD_RULES.flatMap(r => [r.canonical, ...(Array.isArray(r.aliases) ? r.aliases : [])]).map(s => String(s || "").trim().toLowerCase()).filter(Boolean)
+                        ]);
+
                         if (cleanLabel) {
                             lastSectionLabel = lowerLabel;
                             if (isBenefitSectionLabel(lowerLabel)) {
@@ -10246,6 +10333,14 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                                 currentSection = "aqd";
                             } else if (isSurplusUnderwritingLabel(lowerLabel)) {
                                 currentSection = "surplus_underwriting";
+                            } else if (KNOWN_SPEC_EXIT_LABELS.has(lowerLabel) || isNonBenefitColumn(cleanLabel) || Boolean(resolveKnownNonBenefitName(cleanLabel))) {
+                                currentSection = "spec";
+                            } else if (currentSection === "benefits") {
+                                // Tetap berada di zona benefits ketika baris memiliki nama benefit di kolom kiri (misal Death Benefit, Maturity Benefit, Living Benefit)
+                                currentSection = "benefits";
+                            } else if (Boolean(resolveKnownBenefitName(cleanLabel)) || Boolean(findExistingMasterBenefit(cleanLabel))) {
+                                // Auto-deteksi: jika label kolom kiri sudah ada di daftar Benefit Master Sheet / Config, langsung perlakukan sebagai Benefit
+                                currentSection = "benefits";
                             } else {
                                 currentSection = "spec";
                             }
@@ -10327,16 +10422,49 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
 
                             let targetBenefitCol = null;
                             let benefitVal = "";
+                            const hasRowBenefitLabel = Boolean(cleanLabel && !isBenefitSectionLabel(lowerLabel));
 
                             if (hasText) {
                                 const extracted = extractBenefitKeyAndValue(val);
-                                if (extracted && extracted.key) {
-                                    targetBenefitCol = extracted.key;
-                                    benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : extracted.key;
-                                } else if (lastBenefitTargetByRow[r]) {
-                                    targetBenefitCol = lastBenefitTargetByRow[r];
-                                    benefitVal = val;
+                                if (hasRowBenefitLabel) {
+                                    // Nama benefit ada di kolom kiri (misal Format Export Comparison & Format Syariah)
+                                    const resolvedRowBen = resolveKnownBenefitName(cleanLabel) || findExistingMasterBenefit(cleanLabel) || cleanLabel;
+                                    if (isUmbrellaBenefitLabel(lowerLabel) && extracted && extracted.key) {
+                                        // Kategori payung (misal "Living Benefit"): gunakan nama spesifik dari dalam sel (Cash Benefit, Manfaat Dana Tahapan, dll.)
+                                        targetBenefitCol = extracted.key;
+                                        benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : val;
+                                    } else if (extracted && extracted.key) {
+                                        const extractedKeyNorm = normalizeBenefitNameKey(extracted.key);
+                                        const rowKeyNorm = normalizeBenefitNameKey(resolvedRowBen);
+                                        const extractedResolved = resolveKnownBenefitName(extracted.key) || findExistingMasterBenefit(extracted.key);
+                                        const sameAsRow = extractedKeyNorm === rowKeyNorm
+                                            || normalizeBenefitNameKey(cleanLabel) === extractedKeyNorm
+                                            || (extractedResolved && normalizeBenefitNameKey(extractedResolved) === rowKeyNorm);
+                                        if (sameAsRow) {
+                                            // Judul di baris 1 sel sama/alias dengan kolom kiri -> potong agar tidak double!
+                                            targetBenefitCol = resolvedRowBen;
+                                            benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : stripDuplicateLeadingBenefitTitle(resolvedRowBen, val, cleanLabel);
+                                        } else {
+                                            // Sub-benefit berbeda di dalam baris (misal "Additional Death Benefit due to Crash" / "SA Booster Benefit")
+                                            targetBenefitCol = extractedResolved || extracted.key;
+                                            benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : val;
+                                        }
+                                    } else {
+                                        targetBenefitCol = resolvedRowBen;
+                                        benefitVal = stripDuplicateLeadingBenefitTitle(resolvedRowBen, val, cleanLabel);
+                                    }
+                                } else {
+                                    // Format Excel vertikal lama (kolom kiri kosong, nama & nilai ada di dalam sel)
+                                    if (extracted && extracted.key) {
+                                        targetBenefitCol = extracted.key;
+                                        benefitVal = (extracted.value && extracted.value.trim() !== "") ? extracted.value : extracted.key;
+                                    } else if (lastBenefitTargetByRow[r]) {
+                                        targetBenefitCol = lastBenefitTargetByRow[r];
+                                        benefitVal = val;
+                                    }
                                 }
+                            } else if (hasRowBenefitLabel && hasImgs) {
+                                targetBenefitCol = resolveKnownBenefitName(cleanLabel) || findExistingMasterBenefit(cleanLabel) || cleanLabel;
                             }
 
                             if (targetBenefitCol) {
@@ -10346,7 +10474,8 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                                 targetBenefitCol = finalColName;
                                 lastBenefitTargetByRow[r] = finalColName;
 
-                                const sanitizedVal = sanitizeValue(benefitVal);
+                                const dedupedVal = stripDuplicateLeadingBenefitTitle(finalColName, benefitVal, cleanLabel);
+                                const sanitizedVal = sanitizeValue(dedupedVal);
                                 if (!dynamicColumns.includes(finalColName) && (sanitizedVal !== "-" || hasImgs) && !isNonBenefitColumn(finalColName)) {
                                     // Sisipkan kolom manfaat baru tepat setelah Column K (index ke-5 pada dynamicColumns)
                                     const insertIdx = Math.min(5, dynamicColumns.length);
@@ -10398,7 +10527,10 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                                     ...CORE_FIELD_RULES.flatMap(r => [r.canonical, ...(Array.isArray(r.aliases) ? r.aliases : [])]).map(s => String(s || "").trim().toLowerCase()).filter(Boolean)
                                 ]);
 
-                                if (KNOWN_IDENTITY_OR_ALIAS_SPECS.has(lowerSpecKey)) {
+                                if (lowerSpecKey === "category system") {
+                                    // Metadata kategori tampilan (tidak perlu masuk sebagai kolom Non-Benefit baru)
+                                    continue;
+                                } else if (KNOWN_IDENTITY_OR_ALIAS_SPECS.has(lowerSpecKey)) {
                                     if (hasText) attrMap[targetSpecKey] = sanitizeValue(val);
                                     if (hasImgs) appendImagesToAttr(targetSpecKey, rowImgs);
                                 } else {
