@@ -78,6 +78,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
         // Alias nama manfaat & ketentuan non-benefit dari sheet Config
         let BENEFIT_ALIAS_MAP = {};            // normalizedKey -> Nama Standar
         let BENEFIT_CONFIG_CANONICALS = new Set(); // normalizedKey dari Nama Standar di Config
+        let BENEFIT_CONFIG_CANONICAL_LIST = []; // daftar Nama Standar Benefit dari Config (case asli)
         let NON_BENEFIT_ALIAS_MAP = {};        // normalizedKey -> Nama Standar Non-Benefit
         let NON_BENEFIT_CONFIG_CANONICALS = new Set();
 
@@ -8689,6 +8690,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             NON_BENEFIT_CONFIG_CANONICALS = new Set();
             BENEFIT_ALIAS_MAP = {};
             BENEFIT_CONFIG_CANONICALS = new Set();
+            BENEFIT_CONFIG_CANONICAL_LIST = [];
             STANDARD_BENEFIT_COLUMNS = [...DEFAULT_STANDARD_BENEFIT_COLUMNS];
             DPLK_BENEFIT_RULES = DEFAULT_DPLK_BENEFIT_RULES.map(r => ({ canonical: r.canonical, aliases: [...r.aliases] }));
             DPLK_BENEFIT_COLUMNS = DPLK_BENEFIT_RULES.map(r => r.canonical);
@@ -8840,6 +8842,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
         function loadBenefitAliasesFromConfig(aliasRows) {
             BENEFIT_ALIAS_MAP = {};
             BENEFIT_CONFIG_CANONICALS = new Set();
+            BENEFIT_CONFIG_CANONICAL_LIST = [];
             STANDARD_BENEFIT_COLUMNS = [...DEFAULT_STANDARD_BENEFIT_COLUMNS];
             if (!Array.isArray(aliasRows)) return;
             aliasRows.forEach(item => {
@@ -8847,6 +8850,9 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 if (!canonical) return;
                 const cKey = normalizeBenefitNameKey(canonical);
                 BENEFIT_CONFIG_CANONICALS.add(cKey);
+                if (!BENEFIT_CONFIG_CANONICAL_LIST.some(b => b.toLowerCase() === canonical.toLowerCase())) {
+                    BENEFIT_CONFIG_CANONICAL_LIST.push(canonical);
+                }
                 if (!STANDARD_BENEFIT_COLUMNS.some(b => b.toLowerCase() === canonical.toLowerCase())) {
                     STANDARD_BENEFIT_COLUMNS.push(canonical);
                 }
@@ -8957,14 +8963,25 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 _reviewMasterCache &&
                 _reviewMasterCache.baseRef === base &&
                 _reviewMasterCache.baseLen === base.length &&
-                _reviewMasterCache.baseNbLen === baseNbRef.length
+                _reviewMasterCache.baseNbLen === baseNbRef.length &&
+                _reviewMasterCache.cfgBenLen === BENEFIT_CONFIG_CANONICAL_LIST.length
             ) {
                 return _reviewMasterCache;
             }
 
             const baseNb = getBaseNonBenefitColumns();
             const baseNbSet = new Set(baseNb.map(c => c.toLowerCase()));
-            const benefitCols = base.filter(col => Boolean(col) && !baseNbSet.has(col.toLowerCase()) && !isDplkChargeColumn(col));
+            const benefitCols = [];
+            const seenBenLower = new Set();
+            // Gabungkan Benefit dari Config + header yang sudah ada di Master Sheet (sehingga tetap muncul di dropdown & valid walau tab produk kosong)
+            [...BENEFIT_CONFIG_CANONICAL_LIST, ...base].forEach(col => {
+                const clean = String(col || "").trim();
+                if (!clean) return;
+                const low = clean.toLowerCase();
+                if (baseNbSet.has(low) || isDplkChargeColumn(clean) || seenBenLower.has(low)) return;
+                seenBenLower.add(low);
+                benefitCols.push(clean);
+            });
 
             const excluded = new Set(["launch date", "tanggal rilis", "remarks", "product name", "company name", "par/non par", "product type", "distribution channel", "currency"]);
             const mergedNb = [...baseNb];
@@ -8993,6 +9010,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 baseRef: base,
                 baseLen: base.length,
                 baseNbLen: baseNbRef.length,
+                cfgBenLen: BENEFIT_CONFIG_CANONICAL_LIST.length,
                 benefitCols,
                 nonBenefitCols,
                 benefitKeyMap,
@@ -10832,7 +10850,12 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                                 if (m.canonical) NON_BENEFIT_CONFIG_CANONICALS.add(normalizeBenefitNameKey(m.canonical));
                             } else {
                                 if (aKey) BENEFIT_ALIAS_MAP[aKey] = m.canonical;
-                                if (m.canonical) BENEFIT_CONFIG_CANONICALS.add(normalizeBenefitNameKey(m.canonical));
+                                if (m.canonical) {
+                                    BENEFIT_CONFIG_CANONICALS.add(normalizeBenefitNameKey(m.canonical));
+                                    if (!BENEFIT_CONFIG_CANONICAL_LIST.some(b => b.toLowerCase() === String(m.canonical).toLowerCase())) {
+                                        BENEFIT_CONFIG_CANONICAL_LIST.push(String(m.canonical).trim());
+                                    }
+                                }
                             }
                         });
                     } catch (aliasErr) {
@@ -11015,8 +11038,11 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
 
         function syncClientConfigFromAliasManager(cfg) {
             if (!cfg) return;
-            if (typeof applyConfigFromAppsScript === "function") {
-                applyConfigFromAppsScript(cfg);
+            if (typeof applyDynamicConfigFromBackend === "function") {
+                applyDynamicConfigFromBackend(cfg);
+            }
+            if (uploadWorkbookCache) {
+                uploadWorkbookCache.baseNonBenefits = NON_BENEFIT_COLUMNS.slice();
             }
             invalidateReviewLookupCaches();
             invalidateLocalSummaryCache();
