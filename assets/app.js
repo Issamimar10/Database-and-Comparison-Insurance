@@ -6788,7 +6788,7 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                         else dynamicColumns.push(finalColName);
                     }
                     updatedAttr[finalColName] = valWithImgs;
-                    if (!STANDARD_FIXED_SPEC_COLS.has(finalColName.toLowerCase()) && !NON_BENEFIT_CONFIG_CANONICALS.has(normalizeBenefitNameKey(finalColName))) {
+                    if (!NON_BENEFIT_CONFIG_CANONICALS.has(normalizeBenefitNameKey(finalColName))) {
                         customNonBenefitsToRegister.push({ entryType: "Non-Benefit", canonical: finalColName, alias: "" });
                     }
                 }
@@ -6837,6 +6837,9 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                         dynamicColumns.splice(insertIdx, 0, finalColName);
                     }
                     updatedAttr[finalColName] = valWithImgs;
+                    if (!BENEFIT_CONFIG_CANONICALS.has(normalizeBenefitNameKey(finalColName))) {
+                        customNonBenefitsToRegister.push({ entryType: "Benefit", canonical: finalColName, alias: "" });
+                    }
                 }
             }
 
@@ -7011,9 +7014,22 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 if (customNonBenefitsToRegister.length > 0) {
                     try {
                         await postAuthenticatedAppsScript({ action: "save_benefit_aliases", mappings: customNonBenefitsToRegister });
+                        customNonBenefitsToRegister.forEach(m => {
+                            if (!m || !m.canonical) return;
+                            const cKey = normalizeBenefitNameKey(m.canonical);
+                            if (String(m.entryType || "").toLowerCase() === "non-benefit") {
+                                NON_BENEFIT_CONFIG_CANONICALS.add(cKey);
+                            } else {
+                                BENEFIT_CONFIG_CANONICALS.add(cKey);
+                                if (!BENEFIT_CONFIG_CANONICAL_LIST.some(b => b.toLowerCase() === String(m.canonical).toLowerCase())) {
+                                    BENEFIT_CONFIG_CANONICAL_LIST.push(String(m.canonical).trim());
+                                }
+                            }
+                        });
+                        invalidateReviewLookupCaches();
                     } catch (e) {
                         if (e && e.code === "UNAUTHORIZED") throw e;
-                        console.warn("Failed to save non-benefit aliases:", e);
+                        console.warn("Failed to save custom benefit/non-benefit to Config:", e);
                     }
                 }
 
@@ -7551,9 +7567,22 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                 if (customNonBenefitsToRegister.length > 0) {
                     try {
                         await postAuthenticatedAppsScript({ action: "save_benefit_aliases", mappings: customNonBenefitsToRegister });
+                        customNonBenefitsToRegister.forEach(m => {
+                            if (!m || !m.canonical) return;
+                            const cKey = normalizeBenefitNameKey(m.canonical);
+                            if (String(m.entryType || "").toLowerCase() === "non-benefit") {
+                                NON_BENEFIT_CONFIG_CANONICALS.add(cKey);
+                            } else {
+                                BENEFIT_CONFIG_CANONICALS.add(cKey);
+                                if (!BENEFIT_CONFIG_CANONICAL_LIST.some(b => b.toLowerCase() === String(m.canonical).toLowerCase())) {
+                                    BENEFIT_CONFIG_CANONICAL_LIST.push(String(m.canonical).trim());
+                                }
+                            }
+                        });
+                        invalidateReviewLookupCaches();
                     } catch (e) {
                         if (e && e.code === "UNAUTHORIZED") throw e;
-                        console.warn("Failed to save non-benefit aliases:", e);
+                        console.warn("Failed to save custom benefit/non-benefit to Config:", e);
                     }
                 }
 
@@ -9787,15 +9816,15 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
                     if (!baseNbSet.has(item.col.toLowerCase()) && item.col.toLowerCase() !== target.toLowerCase()) {
                         NON_BENEFIT_COLUMNS = NON_BENEFIT_COLUMNS.filter(c => c.toLowerCase() !== item.col.toLowerCase());
                     }
-                    if (isRenamedOrAliased || (!STANDARD_FIXED_SPEC_COLS.has(target.toLowerCase()) && !NON_BENEFIT_CONFIG_CANONICALS.has(normalizeBenefitNameKey(target)))) {
+                    if (isRenamedOrAliased || !NON_BENEFIT_CONFIG_CANONICALS.has(normalizeBenefitNameKey(target))) {
                         pushMapping("Non-Benefit", target, isRenamedOrAliased ? item.col : "");
                     }
                 } else {
                     if (!baseNbSet.has(item.col.toLowerCase())) {
                         NON_BENEFIT_COLUMNS = NON_BENEFIT_COLUMNS.filter(c => c.toLowerCase() !== item.col.toLowerCase());
                     }
-                    if (isRenamedOrAliased) {
-                        pushMapping("Benefit", target, item.col);
+                    if (isRenamedOrAliased || !BENEFIT_CONFIG_CANONICALS.has(normalizeBenefitNameKey(target))) {
+                        pushMapping("Benefit", target, isRenamedOrAliased ? item.col : "");
                     }
                 }
 
