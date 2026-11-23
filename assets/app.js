@@ -11068,6 +11068,12 @@ const SHEET_ID = "1NF4sv1CT_C4Vv6tJC5ppplVir3abi8_9GYHAwhdM8YI";
             if (entry) {
                 titleEl.textContent = `Edit Alias — ${entry.canonical}`;
                 rowInput.value = String(entry.rowNum);
+                if (typeInput && entry.entryType && !Array.from(typeInput.options).some(o => o.value === entry.entryType)) {
+                    const opt = document.createElement("option");
+                    opt.value = entry.entryType;
+                    opt.textContent = entry.entryType;
+                    typeInput.appendChild(opt);
+                }
                 typeInput.value = entry.entryType;
                 canonInput.value = entry.canonical;
                 aliasInput.value = (entry.aliases || []).join(", ");

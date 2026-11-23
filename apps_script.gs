@@ -1110,20 +1110,43 @@ function buildAllProductDataResponse(mode, bypassCache) {
           });
         }
       }
-    } else if (type === "non-benefit" || type === "non-benefit (syariah)" || type === "non-benefit (dplk)") {
+    } else if (type === "non-benefit" || /^non-benefit\s*\((.+)\)$/i.test(type)) {
       if (!nonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
         nonBenefitColumns.push(val);
       }
       let scope = "general";
-      if (type === "non-benefit (syariah)") {
-        scope = "syariah";
-        if (!syariahNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
-          syariahNonBenefitColumns.push(val);
+      const nbCatMatch = type.match(/^non-benefit\s*\((.+)\)$/i);
+      if (nbCatMatch) {
+        const rawScopeCat = nbCatMatch[1].trim();
+        const lowerScopeCat = rawScopeCat.toLowerCase();
+        if (lowerScopeCat === "syariah" || lowerScopeCat === "sharia") {
+          scope = "syariah";
+          if (!syariahNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+            syariahNonBenefitColumns.push(val);
+          }
+        } else if (lowerScopeCat === "dplk") {
+          scope = "dplk";
+          if (!dplkNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
+            dplkNonBenefitColumns.push(val);
+          }
+        } else {
+          scope = "special";
         }
-      } else if (type === "non-benefit (dplk)") {
-        scope = "dplk";
-        if (!dplkNonBenefitColumns.some(function(c) { return c.toLowerCase() === val.toLowerCase(); })) {
-          dplkNonBenefitColumns.push(val);
+        // Daftarkan sebagai Special Provision kategori terkait agar muncul di Edit Category, form & tabel kategori tersebut saja
+        const matchedCat = configuredTabs.find(function(t) {
+          const tl = t.toLowerCase();
+          return tl === lowerScopeCat || (lowerScopeCat === "syariah" && tl === "sharia") || (lowerScopeCat === "sharia" && tl === "syariah");
+        }) || rawScopeCat;
+        const catEntry = ensureCatCfg(matchedCat);
+        const allowImg = /\[image\]/i.test(desc) || val.toLowerCase() === "alokasi kontribusi";
+        const cleanDesc = desc.replace(/\[image\]/gi, "").trim();
+        if (catEntry && !catEntry.specialProvisions.some(function(sp) { return sp.name.toLowerCase() === val.toLowerCase(); })) {
+          catEntry.specialProvisions.push({
+            name: val,
+            aliases: aliasesList,
+            allowImage: allowImg,
+            description: cleanDesc
+          });
         }
       }
       nonBenefitAliases.push({
@@ -1338,12 +1361,13 @@ function saveSheetCategoryConfig_(ss, payload) {
   const cfgCols = Math.max(4, configSheet.getLastColumn());
   const cfgData = cfgLastRow > 0 ? configSheet.getRange(1, 1, cfgLastRow, cfgCols).getDisplayValues() : [CONFIG_HEADERS_4COL_];
 
-  const spCatLabel = "Special Provision (" + sheetName + ")";
-  const spCatLower = spCatLabel.toLowerCase();
-  const secCatLabel = "Product Section (" + sheetName + ")";
-  const secCatLower = secCatLabel.toLowerCase();
   const isShariaAlias = /^(sharia|syariah)$/i.test(sheetName);
   const isDplkSheet = /^dplk$/i.test(sheetName);
+  const spCatLabel = isShariaAlias ? "Non-Benefit (Syariah)" : ("Non-Benefit (" + sheetName + ")");
+  const spCatLower = spCatLabel.toLowerCase();
+  const legacySpCatLower = ("special provision (" + sheetName + ")").toLowerCase();
+  const secCatLabel = "Product Section (" + sheetName + ")";
+  const secCatLower = secCatLabel.toLowerCase();
 
   const nonBenExistingKeys = {};
   const retainedRows = [CONFIG_HEADERS_4COL_];
@@ -1361,11 +1385,11 @@ function saveSheetCategoryConfig_(ss, payload) {
 
     if (!c0 && !c1 && !c2 && !c3) continue;
 
-    // Hapus baris Special Provision / Product Section lama milik kategori ini (akan digantikan yang terbaru)
-    if (c0L === spCatLower || c0L === secCatLower) {
+    // Hapus baris Non-Benefit (<Kategori>) / Special Provision / Product Section lama milik kategori ini (akan digantikan yang terbaru)
+    if (c0L === spCatLower || c0L === legacySpCatLower || c0L === secCatLower) {
       continue;
     }
-    if (isShariaAlias && c0L === "non-benefit (syariah)") continue;
+    if (isShariaAlias && (c0L === "non-benefit (syariah)" || c0L === "non-benefit (sharia)")) continue;
     if (isDplkSheet && c0L === "non-benefit (dplk)") continue;
 
     if ((c0L === "sheet" || c0L === "tab" || c0L === "kategori" || c0L === "category") && c1L === lowerSheetName) {
@@ -1395,17 +1419,26 @@ function saveSheetCategoryConfig_(ss, payload) {
   }
 
   specialProvisions.forEach(function(sp) {
-    const descBase = sp.description || ("Special Provision khusus kategori " + sheetName + " (di-lock / tidak dihapus otomatis)");
+    const descBase = sp.description || ("Ketentuan khusus kategori " + sheetName + " (di-lock / tidak dihapus otomatis)");
     const finalDesc = sp.allowImage ? (descBase + " [Image]") : descBase;
     retainedRows.push([spCatLabel, sp.name, sp.aliases.join(", "), finalDesc]);
   });
 
-  productSections.forEach(function(sec) {
-    const itemsStr = sec.items.join(", ");
-    const valCol = itemsStr ? ("mode=" + sec.mode + " | " + itemsStr) : ("mode=" + sec.mode);
-    const modeLabel = sec.mode === "checklist" ? "Checklist + Catatan" : "Teks & Gambar";
-    retainedRows.push([secCatLabel, sec.title, valCol, "Section " + sec.title + " pada " + sheetName + " (" + modeLabel + ")"]);
-  });
+  // Jangan tulis baris Product Section jika hanya berisi default bawaan ("Product Benefits" mode=standard tanpa item checklist)
+  const isDefaultProductSectionsOnly =
+    productSections.length === 1 &&
+    String(productSections[0].title || "").trim().toLowerCase() === "product benefits" &&
+    String(productSections[0].mode || "standard").trim().toLowerCase() === "standard" &&
+    (!Array.isArray(productSections[0].items) || productSections[0].items.length === 0);
+
+  if (!isDefaultProductSectionsOnly) {
+    productSections.forEach(function(sec) {
+      const itemsStr = sec.items.join(", ");
+      const valCol = itemsStr ? ("mode=" + sec.mode + " | " + itemsStr) : ("mode=" + sec.mode);
+      const modeLabel = sec.mode === "checklist" ? "Checklist + Catatan" : "Teks & Gambar";
+      retainedRows.push([secCatLabel, sec.title, valCol, "Section " + sec.title + " pada " + sheetName + " (" + modeLabel + ")"]);
+    });
+  }
 
   // Daftarkan General Provision kustom baru ke kategori "Non-Benefit" agar tetap diproteksi
   const builtInCoreOrGen = {
@@ -1475,7 +1508,7 @@ function saveBenefitAliases_(ss, mappings) {
     const typeLower = rawType.toLowerCase();
     const canonical = String(data[i][1] || "").trim();
     const desc = String(data[i][3] || "").trim();
-    const isNbType = typeLower === "non-benefit" || typeLower === "non-benefit (syariah)" || typeLower === "non-benefit (dplk)";
+    const isNbType = typeLower === "non-benefit" || typeLower.indexOf("non-benefit (") === 0;
     const isBenType = typeLower === "benefit" || typeLower === "benefit (dplk)";
     if ((isBenType || isNbType) && canonical) {
       const groupKey = isNbType ? "non-benefit" : "benefit";
@@ -1575,7 +1608,7 @@ function manageBenefitAliases_(ss, payload) {
       const rawType = String(data[i][0] || "").trim();
       const typeLower = rawType.toLowerCase();
       const canonical = String(data[i][1] || "").trim();
-      const isNbType = typeLower === "non-benefit" || typeLower === "non-benefit (syariah)" || typeLower === "non-benefit (dplk)";
+      const isNbType = typeLower === "non-benefit" || typeLower.indexOf("non-benefit (") === 0;
       const isBenType = typeLower === "benefit" || typeLower === "benefit (dplk)";
       if ((isBenType || isNbType) && canonical) {
         entries.push({
@@ -1599,8 +1632,9 @@ function manageBenefitAliases_(ss, payload) {
     const rawType = String(payload.entryType || "Benefit").trim();
     const typeLower = rawType.toLowerCase();
     const isNb = typeLower.indexOf("non-benefit") === 0;
+    const nbScopedMatch = rawType.match(/^non-benefit\s*\((.+)\)$/i);
     const safeType = isNb
-      ? (typeLower === "non-benefit (syariah)" ? "Non-Benefit (Syariah)" : (typeLower === "non-benefit (dplk)" ? "Non-Benefit (DPLK)" : "Non-Benefit"))
+      ? (nbScopedMatch ? ("Non-Benefit (" + nbScopedMatch[1].trim() + ")") : "Non-Benefit")
       : (typeLower === "benefit (dplk)" ? "Benefit (DPLK)" : "Benefit");
     const canonical = String(payload.canonical || "").trim();
     if (!canonical) {
@@ -2009,8 +2043,7 @@ function doPost(e) {
               cat === "core" ||
               cat === "identitas" ||
               cat === "non-benefit" ||
-              cat === "non-benefit (syariah)" ||
-              cat === "non-benefit (dplk)" ||
+              cat.indexOf("non-benefit (") === 0 ||
               cat.indexOf("special provision") === 0 ||
               cat === "biaya (dplk)" ||
               cat === "dplk charge"
