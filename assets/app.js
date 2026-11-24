@@ -3082,7 +3082,7 @@ async function openComparisonModal(forceProceed = false) {
                 listEl.innerHTML = `
                             <div class="space-y-1.5">
                                 <div class="text-[11px] font-extrabold uppercase tracking-wider text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
-                                    <i class="fa-solid fa-shield-halved"></i> Insurance Products (${insuranceProducts.length})
+                                    <i class="fa-solid fa-shield-alt"></i> Insurance Products (${insuranceProducts.length})
                                 </div>
                                 <div class="space-y-1">
                                     ${renderGroupItems(insuranceProducts, "bg-blue-100 text-blue-800 dark:bg-neutral-700/70 dark:text-blue-200")}
