@@ -38,14 +38,7 @@ backups/
 test*.html
 .agents/
 
-# Log Audit 
-Ringkasan_Security_Audit_Test2.4_dan_AppsScript.docx
-Ringkasan_Hasil_Perbaikan_Kode_Awam.docx
-AUDIT_EFEKTIVITAS_KODE_IDCM.docx
-Audit_Security_Codex_Index_dan_AppsScript.docx
-DEPLOYMENT_GUIDE.docx
-LAPORAN_IMPROVEMENT_IDCM.docx
-LAPORAN_AUDIT_SECURITY_DAN_CODE_IDCM.docx
+# Log Audit
+log/
+src/log/
 node_modules/
-Audit_Header_vs_Config.xlsx
-PANDUAN_DEPLOY_DAN_MIGRASI_IDCM.docx
