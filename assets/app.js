@@ -767,13 +767,13 @@ const DEFAULT_CHANNEL_FILTER_RULES = [
 let CHANNEL_FILTER_RULES = DEFAULT_CHANNEL_FILTER_RULES.map(r => ({ canonical: r.canonical, aliases: [...r.aliases] }));
 
 const DEFAULT_UNDERWRITING_FILTER_RULES = [
-    { canonical: "GIO", aliases: ["gio", "guaranteed issue offer", "guaranteed issuance"] },
-    { canonical: "SIO", aliases: ["sio", "simplified issue offer", "simplified issuance"] },
+    { canonical: "GIO", aliases: ["gio", "guaranteed issue", "guaranteed issuance", "guaranteed acceptance"] },
+    { canonical: "SIO", aliases: ["sio", "simplified issue", "simplified issuance", "simplified underwriting"] },
     { canonical: "Full Underwriting", aliases: ["full underwriting", "fuw", "full uw"] },
     { canonical: "NMU / Non-Medical", aliases: ["nmu", "non-medical", "non medical"] },
-    { canonical: "Medical Underwriting", aliases: ["medical"] },
+    { canonical: "Medical Underwriting", aliases: ["medical underwriting", "medical check", "medical exam"] },
     { canonical: "Clean Case", aliases: ["clean case"] },
-    { canonical: "Health Declaration", aliases: ["health declaration", "simple question", "questionnaire", "deklarasi kesehatan"] },
+    { canonical: "Health Declaration", aliases: ["health declaration", "health question", "simple question", "questionnaire", "deklarasi kesehatan", "pernyataan kesehatan"] },
     { canonical: "Free Cover Limit (FCL)", aliases: ["free cover", "fcl"] }
 ];
 let UNDERWRITING_FILTER_RULES = DEFAULT_UNDERWRITING_FILTER_RULES.map(r => ({ canonical: r.canonical, aliases: [...r.aliases] }));
@@ -840,29 +840,56 @@ function extractNormalizedUnderwriting(rawUw) {
         if (t && !tags.includes(t)) tags.push(t);
     };
 
-    const rules = (Array.isArray(UNDERWRITING_FILTER_RULES) && UNDERWRITING_FILTER_RULES.length > 0)
+    // Gabungkan aturan dari Config dengan alias bawaan agar frasa seperti "Simplified Underwriting" / "Guaranteed Acceptance" tetap terdeteksi
+    const baseRules = (Array.isArray(UNDERWRITING_FILTER_RULES) && UNDERWRITING_FILTER_RULES.length > 0)
         ? UNDERWRITING_FILTER_RULES
         : DEFAULT_UNDERWRITING_FILTER_RULES;
+    const mergedRulesMap = new Map();
+    baseRules.forEach(r => {
+        const canon = String((r && r.canonical) || "").trim();
+        if (!canon) return;
+        mergedRulesMap.set(canon.toLowerCase(), {
+            canonical: canon,
+            aliases: Array.isArray(r.aliases) ? [...r.aliases] : []
+        });
+    });
+    DEFAULT_UNDERWRITING_FILTER_RULES.forEach(dr => {
+        const key = dr.canonical.toLowerCase();
+        if (mergedRulesMap.has(key)) {
+            const existing = mergedRulesMap.get(key);
+            dr.aliases.forEach(a => {
+                if (!existing.aliases.some(x => String(x).toLowerCase() === a.toLowerCase())) {
+                    existing.aliases.push(a);
+                }
+            });
+        } else {
+            mergedRulesMap.set(key, { canonical: dr.canonical, aliases: [...dr.aliases] });
+        }
+    });
+    const rules = Array.from(mergedRulesMap.values());
 
-    const segments = cleanText
-        .split(/[\r\n,;]+|(?<=\S)\s*\/\s*(?=\S)/)
+    // Cek per baris (BUKAN split koma agar angka seperti "250,000,000" tidak terpecah menjadi "000")
+    const lines = cleanText
+        .split(/[\r\n;]+/)
         .map(s => s.replace(/^[-•*]\s*/, "").trim())
         .filter(Boolean);
 
-    segments.forEach(seg => {
-        const lw = seg.toLowerCase();
-        let matchedKnown = false;
-        const isNonMedical = /\bnmu\b|\bnon[-\s]?medical\b/i.test(lw);
+    lines.forEach(line => {
+        const lw = line.toLowerCase();
+        const isNegatedMedical = /\b(no\s+medical|without\s+medical|tanpa\s+medis|non[-\s]?medical|nmu)\b/i.test(lw);
 
         rules.forEach(rule => {
             const canonical = String(rule.canonical || "").trim();
             if (!canonical) return;
-            // Hindari "Non-Medical" ikut terdorong ke "Medical Underwriting"
-            if (isNonMedical && canonical.toLowerCase() === "medical underwriting") return;
+            // Hindari "No medical exam" / "Non-Medical" ikut terdorong ke "Medical Underwriting"
+            if (isNegatedMedical && canonical.toLowerCase() === "medical underwriting") return;
 
             const kws = [canonical.toLowerCase(), ...(Array.isArray(rule.aliases) ? rule.aliases.map(a => String(a || "").trim().toLowerCase()) : [])].filter(Boolean);
             const matched = kws.some(kw => {
                 if (!kw) return false;
+                if (canonical.toLowerCase() === "medical underwriting" && kw === "medical") {
+                    return /\bmedical\s+(underwriting|exam|check|checkup|check-up)\b/i.test(lw);
+                }
                 if (kw.length <= 4 || !kw.includes(" ")) {
                     const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
                     return new RegExp(`\\b${esc}\\b`, "i").test(lw);
@@ -871,15 +898,19 @@ function extractNormalizedUnderwriting(rawUw) {
             });
             if (matched) {
                 addTag(canonical);
-                matchedKnown = true;
             }
         });
-
-        if (!matchedKnown && seg !== "-") {
-            const concise = seg.length > 48 ? seg.slice(0, 45) + "..." : seg;
-            addTag(concise);
-        }
     });
+
+    // Jika sudah cocok minimal 1 tipe underwriting standar (GIO/SIO/Full Underwriting/dll.),
+    // JANGAN masukkan baris detail syarat/limit usia/UP (seperti "(0-50 yo) : IDR 1.5B", "<=17yo", "000") ke dropdown!
+    if (tags.length === 0) {
+        const firstLine = (lines[0] || "").trim();
+        // Abaikan baris yang murni angka/limit/syarat tanpa tipe underwriting
+        if (firstLine && firstLine !== "-" && !/^[\d.,\s<>≤≥()\-:]+$/.test(firstLine) && !/^surplus underwriting$/i.test(firstLine)) {
+            addTag("Other");
+        }
+    }
 
     return tags;
 }
