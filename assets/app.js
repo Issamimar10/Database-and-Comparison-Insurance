@@ -1479,15 +1479,37 @@ function clearAllFilters() {
     filterData();
 }
 
+let _secondaryTrayTimer = null;
+
 function toggleDesktopSecondaryFilters(e) {
     if (e) e.stopPropagation();
     const tray = document.getElementById("secondaryFiltersTray");
     const btn = document.getElementById("btnDesktopSecondaryFilterToggle");
     const icon = document.getElementById("desktopFilterToggleIcon");
     if (!tray || !btn) return;
-    const isNowOpen = tray.classList.toggle("is-open");
-    // Gunakan scrollWidth aktual agar animasi ease-in-out halus tanpa jeda kosong & tanpa melompat 2 baris
-    tray.style.maxWidth = isNowOpen ? `${Math.max(tray.scrollWidth + 8, 520)}px` : "0px";
+    if (_secondaryTrayTimer) {
+        clearTimeout(_secondaryTrayTimer);
+        _secondaryTrayTimer = null;
+    }
+    const isNowOpen = !tray.classList.contains("is-open");
+    if (isNowOpen) {
+        const targetW = Math.max(tray.scrollWidth + 24, 620);
+        tray.style.maxWidth = `${targetW}px`;
+        tray.classList.add("is-open");
+        // Setelah animasi selesai, bebaskan max-width agar filter kustom tambahan tidak pernah terpotong
+        _secondaryTrayTimer = setTimeout(() => {
+            if (tray.classList.contains("is-open")) {
+                tray.style.maxWidth = "none";
+            }
+            _secondaryTrayTimer = null;
+        }, 400);
+    } else {
+        // Kunci lebar aktual 1 frame sebelum ditutup agar animasi tutup tetap mulus dari ukuran persisnya
+        tray.style.maxWidth = `${tray.scrollWidth}px`;
+        tray.offsetWidth; // force reflow
+        tray.classList.remove("is-open");
+        tray.style.maxWidth = "0px";
+    }
     btn.setAttribute("aria-expanded", String(isNowOpen));
     btn.classList.toggle("bg-blue-600", isNowOpen);
     btn.classList.toggle("text-white", isNowOpen);
