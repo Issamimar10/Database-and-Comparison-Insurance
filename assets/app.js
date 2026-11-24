@@ -1484,6 +1484,7 @@ let _secondaryTrayTimer = null;
 function toggleDesktopSecondaryFilters(e) {
     if (e) e.stopPropagation();
     const tray = document.getElementById("secondaryFiltersTray");
+    const train = document.getElementById("secondaryFiltersTrain");
     const btn = document.getElementById("btnDesktopSecondaryFilterToggle");
     const icon = document.getElementById("desktopFilterToggleIcon");
     if (!tray || !btn) return;
@@ -1492,23 +1493,23 @@ function toggleDesktopSecondaryFilters(e) {
         _secondaryTrayTimer = null;
     }
     const isNowOpen = !tray.classList.contains("is-open");
+    const exactWidth = (train ? train.scrollWidth : tray.scrollWidth);
     if (isNowOpen) {
-        const targetW = Math.max(tray.scrollWidth + 24, 620);
-        tray.style.maxWidth = `${targetW}px`;
+        tray.style.width = `${exactWidth}px`;
         tray.classList.add("is-open");
-        // Setelah animasi selesai, bebaskan max-width agar filter kustom tambahan tidak pernah terpotong
+        // Setelah animasi 600ms selesai, set width: auto agar penambahan custom filter via + Filter ikut meluas otomatis
         _secondaryTrayTimer = setTimeout(() => {
             if (tray.classList.contains("is-open")) {
-                tray.style.maxWidth = "none";
+                tray.style.width = "auto";
             }
             _secondaryTrayTimer = null;
-        }, 400);
+        }, 620);
     } else {
-        // Kunci lebar aktual 1 frame sebelum ditutup agar animasi tutup tetap mulus dari ukuran persisnya
-        tray.style.maxWidth = `${tray.scrollWidth}px`;
+        // Kunci lebar aktual sebelum animasi tutup 600ms agar kereta mundur mulus tanpa lompatan
+        tray.style.width = `${exactWidth}px`;
         tray.offsetWidth; // force reflow
         tray.classList.remove("is-open");
-        tray.style.maxWidth = "0px";
+        tray.style.width = "0px";
     }
     btn.setAttribute("aria-expanded", String(isNowOpen));
     btn.classList.toggle("bg-blue-600", isNowOpen);
