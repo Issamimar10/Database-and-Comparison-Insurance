@@ -447,6 +447,9 @@
                         </div>
                     </div>
 
+                    <!-- Collapsible Secondary Filters (Classic Ease-In-Out slide on Desktop; flat inside Mobile drawer) -->
+                    <div id="secondaryFiltersTray" class="secondary-filters-tray">
+
                     <div class="relative custom-select">
                         <button
                             class="w-full md:w-auto min-w-[90px] border dark:border-neutral-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 text-left flex justify-between items-center hover:bg-gray-50 dark:hover:bg-neutral-600 transition"
@@ -504,12 +507,14 @@
                             class="w-full md:w-auto border border-dashed border-blue-400 dark:border-blue-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-blue-50/70 dark:bg-neutral-700/80 text-blue-700 dark:text-blue-300 font-semibold flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-neutral-600 transition"
                             data-ev-click="a29"
                             title="Add or remove custom filters from database columns">
-                            <i class="fa-solid fa-sliders text-xs"></i>
-                            <span>+ Filter</span>
+                            <i class="fa-solid fa-plus text-xs"></i>
+                            <span>Filter</span>
                         </button>
                         <div id="addFilterDropdown" popover="auto"
                             class="dropdown-content hidden absolute right-0 z-50 mt-1 w-64 bg-white dark:bg-neutral-800 border dark:border-neutral-700 rounded-lg shadow-xl max-h-80 overflow-y-auto p-2 text-xs">
                         </div>
+                    </div>
+
                     </div>
 
                     <!-- Reset All Filters Button -->
@@ -520,16 +525,26 @@
                         <span>Clear All</span>
                     </button>
 
-                    <!-- Sorting Dropdown -->
+                    <!-- Desktop Icon-Only More Filters Toggle (right beside Sort) -->
+                    <button type="button" id="btnDesktopSecondaryFilterToggle" data-ev-click="a178"
+                        aria-expanded="false" aria-controls="secondaryFiltersTray"
+                        aria-label="Toggle More Filters" title="More Filters (Channel, Currency, Launch Year, Underwriting)"
+                        class="hidden md:inline-flex relative w-9 h-9 rounded-lg border border-blue-200 dark:border-neutral-600 bg-blue-50 dark:bg-neutral-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-neutral-600 items-center justify-center shrink-0 transition">
+                        <i id="desktopFilterToggleIcon" class="fa-solid fa-sliders text-sm transition-transform duration-300" aria-hidden="true"></i>
+                        <span id="secondaryFilterCountBadge"
+                            class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-neutral-950 text-[10px] font-extrabold items-center justify-center leading-none shadow-sm">0</span>
+                    </button>
+
+                    <!-- Icon-Only Sorting Dropdown -->
                     <div class="relative custom-select">
                         <button
-                            class="w-full md:w-auto min-w-[95px] border dark:border-neutral-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-blue-50 dark:bg-neutral-700 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-neutral-700 font-medium text-left flex justify-between items-center hover:bg-blue-100 dark:hover:bg-neutral-600 transition"
-                            data-ev-click="a31" title="Sort Products">
+                            class="w-full md:w-9 md:h-9 border dark:border-neutral-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 md:p-0 bg-blue-50 dark:bg-neutral-700 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-neutral-600 font-medium flex justify-between md:justify-center items-center hover:bg-blue-100 dark:hover:bg-neutral-600 transition shrink-0"
+                            data-ev-click="a31" aria-label="Sort Products" title="Sort Products">
                             <span class="flex items-center gap-1.5">
-                                <i class="fa-solid fa-arrow-down-short-wide text-xs"></i>
-                                <span id="sortBtnText" class="truncate font-semibold">Sort</span>
+                                <i class="fa-solid fa-arrow-down-short-wide text-sm"></i>
+                                <span id="sortBtnText" class="truncate font-semibold md:sr-only">Sort</span>
                             </span>
-                            <i class="fa-solid fa-chevron-down text-[10px] ml-1.5 text-blue-400"></i>
+                            <i class="fa-solid fa-chevron-down text-[10px] ml-1.5 text-blue-400 md:hidden"></i>
                         </button>
                         <div id="sortDropdown" popover="auto"
                             class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white dark:bg-neutral-800 border dark:border-neutral-700 rounded-lg shadow-xl p-1.5 text-xs">

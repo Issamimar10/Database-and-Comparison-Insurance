@@ -195,7 +195,8 @@ const IDCM_ACTIONS = {
   a174(el, event, args) { goToDeckPage(args[0]) },
   a175(el, event, args) { setDeckPageSize(el.value) },
   a176(el, event, args) { goToComparePage(args[0]) },
-  a177(el, event, args) { setComparePageSize(el.value) }
+  a177(el, event, args) { setComparePageSize(el.value) },
+  a178(el, event, args) { toggleDesktopSecondaryFilters(event) }
 };
 
 (function initIdcmEventDelegation() {

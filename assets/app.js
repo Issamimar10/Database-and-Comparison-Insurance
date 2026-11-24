@@ -1479,6 +1479,28 @@ function clearAllFilters() {
     filterData();
 }
 
+function toggleDesktopSecondaryFilters(e) {
+    if (e) e.stopPropagation();
+    const tray = document.getElementById("secondaryFiltersTray");
+    const btn = document.getElementById("btnDesktopSecondaryFilterToggle");
+    const icon = document.getElementById("desktopFilterToggleIcon");
+    if (!tray || !btn) return;
+    const isNowOpen = tray.classList.toggle("is-open");
+    btn.setAttribute("aria-expanded", String(isNowOpen));
+    btn.classList.toggle("bg-blue-600", isNowOpen);
+    btn.classList.toggle("text-white", isNowOpen);
+    btn.classList.toggle("border-blue-600", isNowOpen);
+    btn.classList.toggle("dark:bg-blue-600", isNowOpen);
+    btn.classList.toggle("dark:text-white", isNowOpen);
+    btn.classList.toggle("bg-blue-50", !isNowOpen);
+    btn.classList.toggle("dark:bg-neutral-700", !isNowOpen);
+    btn.classList.toggle("text-blue-700", !isNowOpen);
+    btn.classList.toggle("dark:text-blue-300", !isNowOpen);
+    if (icon) {
+        icon.style.transform = isNowOpen ? "rotate(90deg)" : "rotate(0deg)";
+    }
+}
+
 function updateResetAllFiltersVisibility() {
     const btn = document.getElementById("btnResetAllFilters");
     const searchVal = (document.getElementById("searchInput")?.value || "").trim();
@@ -1487,6 +1509,18 @@ function updateResetAllFiltersVisibility() {
     if (btn) {
         btn.classList.toggle("hidden", !hasActive);
         btn.classList.toggle("flex", hasActive);
+    }
+
+    // Update badge jumlah filter sekunder yang aktif pada tombol ikon Filter Desktop
+    const PRIMARY_FILTER_KEYS = new Set(["category", "company", "type"]);
+    const secondaryActiveCount = Object.entries(activeFilters)
+        .filter(([k, arr]) => !PRIMARY_FILTER_KEYS.has(k) && Array.isArray(arr) && arr.length > 0)
+        .length;
+    const secBadge = document.getElementById("secondaryFilterCountBadge");
+    if (secBadge) {
+        secBadge.textContent = String(secondaryActiveCount);
+        secBadge.classList.toggle("hidden", secondaryActiveCount === 0);
+        secBadge.classList.toggle("inline-flex", secondaryActiveCount > 0);
     }
 
     const mobileBadge = document.getElementById("mobileActiveFilterBadge");
