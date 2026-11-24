@@ -767,13 +767,13 @@ const DEFAULT_CHANNEL_FILTER_RULES = [
 let CHANNEL_FILTER_RULES = DEFAULT_CHANNEL_FILTER_RULES.map(r => ({ canonical: r.canonical, aliases: [...r.aliases] }));
 
 const DEFAULT_UNDERWRITING_FILTER_RULES = [
-    { canonical: "GIO", aliases: ["gio", "guaranteed issue offer", "guaranteed issuance"] },
-    { canonical: "SIO", aliases: ["sio", "simplified issue offer", "simplified issuance"] },
+    { canonical: "GIO", aliases: ["gio", "guaranteed issue", "guaranteed issuance", "guaranteed acceptance"] },
+    { canonical: "SIO", aliases: ["sio", "simplified issue", "simplified issuance", "simplified underwriting"] },
     { canonical: "Full Underwriting", aliases: ["full underwriting", "fuw", "full uw"] },
     { canonical: "NMU / Non-Medical", aliases: ["nmu", "non-medical", "non medical"] },
-    { canonical: "Medical Underwriting", aliases: ["medical"] },
+    { canonical: "Medical Underwriting", aliases: ["medical underwriting", "medical check", "medical exam"] },
     { canonical: "Clean Case", aliases: ["clean case"] },
-    { canonical: "Health Declaration", aliases: ["health declaration", "simple question", "questionnaire", "deklarasi kesehatan"] },
+    { canonical: "Health Declaration", aliases: ["health declaration", "health question", "simple question", "questionnaire", "deklarasi kesehatan", "pernyataan kesehatan"] },
     { canonical: "Free Cover Limit (FCL)", aliases: ["free cover", "fcl"] }
 ];
 let UNDERWRITING_FILTER_RULES = DEFAULT_UNDERWRITING_FILTER_RULES.map(r => ({ canonical: r.canonical, aliases: [...r.aliases] }));
@@ -840,29 +840,56 @@ function extractNormalizedUnderwriting(rawUw) {
         if (t && !tags.includes(t)) tags.push(t);
     };
 
-    const rules = (Array.isArray(UNDERWRITING_FILTER_RULES) && UNDERWRITING_FILTER_RULES.length > 0)
+    // Gabungkan aturan dari Config dengan alias bawaan agar frasa seperti "Simplified Underwriting" / "Guaranteed Acceptance" tetap terdeteksi
+    const baseRules = (Array.isArray(UNDERWRITING_FILTER_RULES) && UNDERWRITING_FILTER_RULES.length > 0)
         ? UNDERWRITING_FILTER_RULES
         : DEFAULT_UNDERWRITING_FILTER_RULES;
+    const mergedRulesMap = new Map();
+    baseRules.forEach(r => {
+        const canon = String((r && r.canonical) || "").trim();
+        if (!canon) return;
+        mergedRulesMap.set(canon.toLowerCase(), {
+            canonical: canon,
+            aliases: Array.isArray(r.aliases) ? [...r.aliases] : []
+        });
+    });
+    DEFAULT_UNDERWRITING_FILTER_RULES.forEach(dr => {
+        const key = dr.canonical.toLowerCase();
+        if (mergedRulesMap.has(key)) {
+            const existing = mergedRulesMap.get(key);
+            dr.aliases.forEach(a => {
+                if (!existing.aliases.some(x => String(x).toLowerCase() === a.toLowerCase())) {
+                    existing.aliases.push(a);
+                }
+            });
+        } else {
+            mergedRulesMap.set(key, { canonical: dr.canonical, aliases: [...dr.aliases] });
+        }
+    });
+    const rules = Array.from(mergedRulesMap.values());
 
-    const segments = cleanText
-        .split(/[\r\n,;]+|(?<=\S)\s*\/\s*(?=\S)/)
+    // Cek per baris (BUKAN split koma agar angka seperti "250,000,000" tidak terpecah menjadi "000")
+    const lines = cleanText
+        .split(/[\r\n;]+/)
         .map(s => s.replace(/^[-•*]\s*/, "").trim())
         .filter(Boolean);
 
-    segments.forEach(seg => {
-        const lw = seg.toLowerCase();
-        let matchedKnown = false;
-        const isNonMedical = /\bnmu\b|\bnon[-\s]?medical\b/i.test(lw);
+    lines.forEach(line => {
+        const lw = line.toLowerCase();
+        const isNegatedMedical = /\b(no\s+medical|without\s+medical|tanpa\s+medis|non[-\s]?medical|nmu)\b/i.test(lw);
 
         rules.forEach(rule => {
             const canonical = String(rule.canonical || "").trim();
             if (!canonical) return;
-            // Hindari "Non-Medical" ikut terdorong ke "Medical Underwriting"
-            if (isNonMedical && canonical.toLowerCase() === "medical underwriting") return;
+            // Hindari "No medical exam" / "Non-Medical" ikut terdorong ke "Medical Underwriting"
+            if (isNegatedMedical && canonical.toLowerCase() === "medical underwriting") return;
 
             const kws = [canonical.toLowerCase(), ...(Array.isArray(rule.aliases) ? rule.aliases.map(a => String(a || "").trim().toLowerCase()) : [])].filter(Boolean);
             const matched = kws.some(kw => {
                 if (!kw) return false;
+                if (canonical.toLowerCase() === "medical underwriting" && kw === "medical") {
+                    return /\bmedical\s+(underwriting|exam|check|checkup|check-up)\b/i.test(lw);
+                }
                 if (kw.length <= 4 || !kw.includes(" ")) {
                     const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
                     return new RegExp(`\\b${esc}\\b`, "i").test(lw);
@@ -871,15 +898,19 @@ function extractNormalizedUnderwriting(rawUw) {
             });
             if (matched) {
                 addTag(canonical);
-                matchedKnown = true;
             }
         });
-
-        if (!matchedKnown && seg !== "-") {
-            const concise = seg.length > 48 ? seg.slice(0, 45) + "..." : seg;
-            addTag(concise);
-        }
     });
+
+    // Jika sudah cocok minimal 1 tipe underwriting standar (GIO/SIO/Full Underwriting/dll.),
+    // JANGAN masukkan baris detail syarat/limit usia/UP (seperti "(0-50 yo) : IDR 1.5B", "<=17yo", "000") ke dropdown!
+    if (tags.length === 0) {
+        const firstLine = (lines[0] || "").trim();
+        // Abaikan baris yang murni angka/limit/syarat tanpa tipe underwriting
+        if (firstLine && firstLine !== "-" && !/^[\d.,\s<>≤≥()\-:]+$/.test(firstLine) && !/^surplus underwriting$/i.test(firstLine)) {
+            addTag("Other");
+        }
+    }
 
     return tags;
 }
@@ -1448,6 +1479,53 @@ function clearAllFilters() {
     filterData();
 }
 
+let _secondaryTrayTimer = null;
+
+function toggleDesktopSecondaryFilters(e) {
+    if (e) e.stopPropagation();
+    const tray = document.getElementById("secondaryFiltersTray");
+    const train = document.getElementById("secondaryFiltersTrain");
+    const btn = document.getElementById("btnDesktopSecondaryFilterToggle");
+    const icon = document.getElementById("desktopFilterToggleIcon");
+    if (!tray || !btn) return;
+    if (_secondaryTrayTimer) {
+        clearTimeout(_secondaryTrayTimer);
+        _secondaryTrayTimer = null;
+    }
+    const isNowOpen = !tray.classList.contains("is-open");
+    const exactWidth = (train ? train.scrollWidth : tray.scrollWidth);
+    if (isNowOpen) {
+        tray.style.width = `${exactWidth}px`;
+        tray.classList.add("is-open");
+        // Setelah animasi 600ms selesai, set width: auto agar penambahan custom filter via + Filter ikut meluas otomatis
+        _secondaryTrayTimer = setTimeout(() => {
+            if (tray.classList.contains("is-open")) {
+                tray.style.width = "auto";
+            }
+            _secondaryTrayTimer = null;
+        }, 620);
+    } else {
+        // Kunci lebar aktual sebelum animasi tutup 600ms agar kereta mundur mulus tanpa lompatan
+        tray.style.width = `${exactWidth}px`;
+        tray.offsetWidth; // force reflow
+        tray.classList.remove("is-open");
+        tray.style.width = "0px";
+    }
+    btn.setAttribute("aria-expanded", String(isNowOpen));
+    btn.classList.toggle("bg-blue-600", isNowOpen);
+    btn.classList.toggle("text-white", isNowOpen);
+    btn.classList.toggle("border-blue-600", isNowOpen);
+    btn.classList.toggle("dark:bg-blue-600", isNowOpen);
+    btn.classList.toggle("dark:text-white", isNowOpen);
+    btn.classList.toggle("bg-blue-50", !isNowOpen);
+    btn.classList.toggle("dark:bg-neutral-700", !isNowOpen);
+    btn.classList.toggle("text-blue-700", !isNowOpen);
+    btn.classList.toggle("dark:text-blue-300", !isNowOpen);
+    if (icon) {
+        icon.style.transform = isNowOpen ? "rotate(90deg)" : "rotate(0deg)";
+    }
+}
+
 function updateResetAllFiltersVisibility() {
     const btn = document.getElementById("btnResetAllFilters");
     const searchVal = (document.getElementById("searchInput")?.value || "").trim();
@@ -1456,6 +1534,18 @@ function updateResetAllFiltersVisibility() {
     if (btn) {
         btn.classList.toggle("hidden", !hasActive);
         btn.classList.toggle("flex", hasActive);
+    }
+
+    // Update badge jumlah filter sekunder yang aktif pada tombol ikon Filter Desktop
+    const PRIMARY_FILTER_KEYS = new Set(["category", "company", "type"]);
+    const secondaryActiveCount = Object.entries(activeFilters)
+        .filter(([k, arr]) => !PRIMARY_FILTER_KEYS.has(k) && Array.isArray(arr) && arr.length > 0)
+        .length;
+    const secBadge = document.getElementById("secondaryFilterCountBadge");
+    if (secBadge) {
+        secBadge.textContent = String(secondaryActiveCount);
+        secBadge.classList.toggle("hidden", secondaryActiveCount === 0);
+        secBadge.classList.toggle("inline-flex", secondaryActiveCount > 0);
     }
 
     const mobileBadge = document.getElementById("mobileActiveFilterBadge");
@@ -2710,6 +2800,88 @@ function getCategoryBadge(category) {
     return `<span class="bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
 }
 
+let deckCurrentPage = 1;
+let deckPageSize = 48;
+let _searchFilterDebounceTimer = null;
+
+function scheduleFilterData() {
+    if (_searchFilterDebounceTimer) clearTimeout(_searchFilterDebounceTimer);
+    _searchFilterDebounceTimer = setTimeout(() => {
+        _searchFilterDebounceTimer = null;
+        filterData();
+    }, 150);
+}
+
+function goToDeckPage(pageNum) {
+    if (deckPageSize <= 0) return;
+    const totalPages = Math.max(1, Math.ceil((currentlyVisibleProducts.length || 0) / deckPageSize));
+    const next = Math.min(Math.max(1, parseInt(pageNum, 10) || 1), totalPages);
+    if (next === deckCurrentPage) return;
+    deckCurrentPage = next;
+    renderDeck(currentlyVisibleProducts);
+    const grid = document.getElementById("deckGrid");
+    if (grid) grid.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function setDeckPageSize(rawSize) {
+    if (String(rawSize).toLowerCase() === "all" || rawSize === "0" || rawSize === 0) {
+        deckPageSize = 0;
+        deckCurrentPage = 1;
+        renderDeck(currentlyVisibleProducts);
+        return;
+    }
+    const parsed = parseInt(rawSize, 10);
+    if (!Number.isFinite(parsed) || parsed < 12) return;
+    deckPageSize = parsed;
+    deckCurrentPage = 1;
+    renderDeck(currentlyVisibleProducts);
+}
+
+function renderDeckPaginationBar(totalCount) {
+    const bar = document.getElementById("deckPaginationBar");
+    if (!bar) return;
+    const isAllMode = deckPageSize <= 0;
+    if ((!isAllMode && totalCount <= deckPageSize) || (isAllMode && totalCount <= 24)) {
+        bar.classList.add("hidden");
+        bar.replaceChildren();
+        return;
+    }
+    const effectiveSize = isAllMode ? Math.max(1, totalCount) : deckPageSize;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(totalCount / effectiveSize));
+    if (deckCurrentPage > totalPages) deckCurrentPage = totalPages;
+    const startIdx = isAllMode ? 0 : (deckCurrentPage - 1) * effectiveSize;
+    const endIdx = isAllMode ? totalCount : Math.min(totalCount, startIdx + effectiveSize);
+    const prevDisabled = isAllMode || deckCurrentPage <= 1;
+    const nextDisabled = isAllMode || deckCurrentPage >= totalPages;
+
+    const btnBase = "px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1";
+    const btnActive = "bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-300 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-600 cursor-pointer";
+    const btnDisabled = "bg-gray-100 dark:bg-neutral-800 text-gray-400 dark:text-neutral-500 border-gray-200 dark:border-neutral-700 cursor-not-allowed opacity-60";
+
+    bar.innerHTML = `
+        <div class="text-gray-600 dark:text-neutral-300">
+            Showing <strong>${startIdx + 1}–${endIdx}</strong> of <strong>${totalCount}</strong> products
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1.5 text-gray-500 dark:text-neutral-400">
+                <span>Per page:</span>
+                <select data-ev-change="a175" aria-label="Products per page" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-700 text-gray-800 dark:text-neutral-100 text-xs">
+                    ${[24, 48, 96].map(n => `<option value="${n}" ${!isAllMode && n === deckPageSize ? "selected" : ""}>${n}</option>`).join("")}
+                    <option value="all" ${isAllMode ? "selected" : ""}>All (${totalCount})</option>
+                </select>
+            </label>
+            <div class="flex items-center gap-1">
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}" title="First Page">&laquo;</button>
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([deckCurrentPage - 1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}">&lsaquo; Prev</button>
+                <span class="px-2.5 py-1 font-bold text-gray-700 dark:text-neutral-200">Page ${deckCurrentPage} / ${totalPages}</span>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([deckCurrentPage + 1])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}">Next &rsaquo;</button>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([totalPages])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}" title="Last Page">&raquo;</button>
+            </div>
+        </div>
+    `;
+    bar.classList.remove("hidden");
+}
+
 function renderDeck(data) {
     const grid = document.getElementById("deckGrid");
     document.getElementById("totalProductCount").textContent = `${data.length} Products`;
@@ -2717,15 +2889,32 @@ function renderDeck(data) {
 
     if (data.length === 0) {
         grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-500 dark:text-neutral-400">No products found matching your filters</div>`;
+        renderDeckPaginationBar(0);
         return;
+    }
+
+    const isAllMode = deckPageSize <= 0;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(data.length / deckPageSize));
+    if (deckCurrentPage > totalPages) deckCurrentPage = totalPages;
+    const startIdx = isAllMode ? 0 : (deckCurrentPage - 1) * deckPageSize;
+    const pageData = isAllMode ? data : data.slice(startIdx, startIdx + deckPageSize);
+
+    const selectedSet = new Set(selectedProductIds);
+    const docCountByProdLower = new Map();
+    if (Array.isArray(productDocuments)) {
+        for (let i = 0; i < productDocuments.length; i++) {
+            const k = String((productDocuments[i] && productDocuments[i].productName) || "").trim().toLowerCase();
+            if (k) docCountByProdLower.set(k, (docCountByProdLower.get(k) || 0) + 1);
+        }
     }
 
     const benefitCols = getBenefitColumns();
     const frag = document.createDocumentFragment();
 
-    data.forEach(p => {
-        const isSelected = selectedProductIds.includes(p.id);
+    pageData.forEach(p => {
+        const isSelected = selectedSet.has(p.id);
         const card = document.createElement("div");
+        card.dataset.productId = String(p.id);
         card.className = `product-card bg-white dark:bg-neutral-800 rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-gray-200 dark:border-neutral-700'} hover:shadow-md transition-shadow p-5 flex flex-col justify-between relative`;
 
         let previewBenefitKey = benefitCols.find(k => k.toLowerCase().includes("death benefit") && !isEmptyVal(p.attributes[k])) || benefitCols.find(k => !isEmptyVal(p.attributes[k])) || "";
@@ -2742,6 +2931,8 @@ function renderDeck(data) {
                             <strong class="text-gray-800 dark:text-neutral-200 block">${escapeHtml(previewBenefitKey)}:</strong> ${formatListText(previewVal)}
                            </div>`
                 : '');
+
+        const docCount = docCountByProdLower.get(String(p.name || "").trim().toLowerCase()) || 0;
 
         card.innerHTML = `
                     <div class="flex-1 cursor-pointer group/cardbody" data-ev-click="a115" data-ev-click-args="${idcmPackArgs([p.id])}">
@@ -2763,15 +2954,12 @@ function renderDeck(data) {
                                     <i class="fa-regular fa-calendar-check me-1"></i>${escapeHtml(formatDisplayDate(p.launchDate))}
                                 </span>
                             ` : ''}
-                            ${(() => {
-                const docCount = getDocumentsForProduct(p.name).length;
-                return docCount > 0 ? `
-                                    <span>&bull;</span>
-                                    <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium" title="${docCount} Documents Available">
-                                        <i class="fa-solid fa-paperclip me-1"></i>${docCount} Doc${docCount > 1 ? 's' : ''}
-                                    </span>
-                                ` : '';
-            })()}
+                            ${docCount > 0 ? `
+                                <span>&bull;</span>
+                                <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium" title="${docCount} Documents Available">
+                                    <i class="fa-solid fa-paperclip me-1"></i>${docCount} Doc${docCount > 1 ? 's' : ''}
+                                </span>
+                            ` : ''}
                         </div>
                         
                         ${previewCardHtml}
@@ -2779,7 +2967,7 @@ function renderDeck(data) {
 
                     <div class="pt-3 border-t dark:border-neutral-700 flex justify-between items-center text-xs">
                         <button data-ev-click="a115" data-ev-click-args="${idcmPackArgs([p.id])}" class="text-blue-600 dark:text-blue-400 hover:underline font-medium">View Details</button>
-                        <button data-ev-click="a116" data-ev-click-args="${idcmPackArgs([p.id])}" class="px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-200 dark:border-neutral-600 hover:bg-gray-50 dark:hover:bg-neutral-600'}">
+                        <button data-select-btn="1" data-ev-click="a116" data-ev-click-args="${idcmPackArgs([p.id])}" class="px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-200 dark:border-neutral-600 hover:bg-gray-50 dark:hover:bg-neutral-600'}">
                             <i class="fa-solid ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Selected' : 'Select'}
                         </button>
                     </div>
@@ -2787,9 +2975,24 @@ function renderDeck(data) {
         frag.appendChild(card);
     });
     grid.appendChild(frag);
+    renderDeckPaginationBar(data.length);
+}
+
+function updateCardSelectionUI(id, isSelected) {
+    const grid = document.getElementById("deckGrid");
+    if (!grid) return;
+    const card = grid.querySelector(`.product-card[data-product-id="${CSS.escape(String(id))}"]`);
+    if (!card) return;
+    card.className = `product-card bg-white dark:bg-neutral-800 rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-gray-200 dark:border-neutral-700'} hover:shadow-md transition-shadow p-5 flex flex-col justify-between relative`;
+    const btn = card.querySelector('button[data-select-btn="1"]');
+    if (btn) {
+        btn.className = `px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-200 dark:border-neutral-600 hover:bg-gray-50 dark:hover:bg-neutral-600'}`;
+        btn.innerHTML = `<i class="fa-solid ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Selected' : 'Select'}`;
+    }
 }
 
 function filterData() {
+    deckCurrentPage = 1;
     currentlyVisibleProducts = getProductsMatchingAllExcept(null);
     currentlyVisibleProducts = sortProducts(currentlyVisibleProducts);
     populateAllDropdowns();
@@ -2800,25 +3003,31 @@ function filterData() {
 
 function toggleSelectProduct(id, e) {
     e.stopPropagation();
-    if (selectedProductIds.includes(id)) {
-        selectedProductIds = selectedProductIds.filter(pid => pid !== id);
+    const idx = selectedProductIds.indexOf(id);
+    let nowSelected;
+    if (idx !== -1) {
+        selectedProductIds.splice(idx, 1);
+        nowSelected = false;
     } else {
         selectedProductIds.push(id);
+        nowSelected = true;
     }
     updateCompareBar();
-    renderDeck(currentlyVisibleProducts);
+    updateCardSelectionUI(id, nowSelected);
 }
 
 function selectAllVisible() {
     if (!currentlyVisibleProducts || currentlyVisibleProducts.length === 0) return;
 
-    const allVisibleSelected = currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
+    const selectedSet = new Set(selectedProductIds);
+    const allVisibleSelected = currentlyVisibleProducts.every(p => selectedSet.has(p.id));
     if (allVisibleSelected) {
         const visibleSet = new Set(currentlyVisibleProducts.map(p => p.id));
         selectedProductIds = selectedProductIds.filter(id => !visibleSet.has(id));
     } else {
         currentlyVisibleProducts.forEach(p => {
-            if (!selectedProductIds.includes(p.id)) {
+            if (!selectedSet.has(p.id)) {
+                selectedSet.add(p.id);
                 selectedProductIds.push(p.id);
             }
         });
@@ -2838,8 +3047,9 @@ function updateCompareBar() {
 
     const btnSelectAll = document.getElementById("btnSelectAllVisible");
     if (btnSelectAll) {
+        const selectedSet = new Set(selectedProductIds);
         const allVisibleSelected = currentlyVisibleProducts.length > 0 &&
-            currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
+            currentlyVisibleProducts.every(p => selectedSet.has(p.id));
         if (allVisibleSelected) {
             btnSelectAll.innerHTML = `<i class="fa-solid fa-xmark me-1" aria-hidden="true"></i> Deselect All`;
             btnSelectAll.className = "col-span-2 sm:col-auto justify-self-end sm:justify-self-auto text-[11px] sm:text-xs md:text-sm bg-amber-600/90 hover:bg-amber-600 px-2 sm:px-3 py-1.5 rounded-lg transition text-white font-medium border border-amber-400/50 whitespace-nowrap";
@@ -3050,8 +3260,9 @@ function proceedCrossCategoryComparison() {
 async function openComparisonModal(forceProceed = false) {
     const container = document.getElementById("modalTableContainer");
     const compareModal = document.getElementById("compareModal");
+    const selectedSet = new Set(selectedProductIds);
     currentComparisonProducts = sortComparisonProductsAstraFirst(
-        products.filter(p => selectedProductIds.includes(p.id))
+        products.filter(p => selectedSet.has(p.id))
     );
     if (currentComparisonProducts.length === 0) return;
 
@@ -3116,8 +3327,9 @@ async function openComparisonModal(forceProceed = false) {
 
         await ensureFullProductDataLoaded();
         if (compareModal.classList.contains("hidden")) return;
+        const selectedSetAfter = new Set(selectedProductIds);
         currentComparisonProducts = sortComparisonProductsAstraFirst(
-            products.filter(p => selectedProductIds.includes(p.id))
+            products.filter(p => selectedSetAfter.has(p.id))
         );
         if (currentComparisonProducts.length === 0) return;
     }
@@ -3240,18 +3452,117 @@ async function openComparisonModal(forceProceed = false) {
         currentComparisonFeatures.push(feat);
     });
 
-    const prodCount = currentComparisonProducts.length;
+    compareCurrentPage = 1;
+    renderComparisonTablePage();
+    compareModal.classList.remove("hidden");
+}
+
+let compareCurrentPage = 1;
+let comparePageSize = 15;
+
+function goToComparePage(pageNum) {
+    if (comparePageSize <= 0) return;
+    const totalPages = Math.max(1, Math.ceil((currentComparisonProducts.length || 0) / comparePageSize));
+    const next = Math.min(Math.max(1, parseInt(pageNum, 10) || 1), totalPages);
+    if (next === compareCurrentPage) return;
+    compareCurrentPage = next;
+    renderComparisonTablePage();
+    const container = document.getElementById("modalTableContainer");
+    if (container) container.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}
+
+function setComparePageSize(rawSize) {
+    if (String(rawSize).toLowerCase() === "all" || rawSize === "0" || rawSize === 0) {
+        const total = currentComparisonProducts.length;
+        if (total > 100) {
+            const ok = confirm(`Menampilkan seluruh ${total} kolom produk sekaligus bisa membuat browser terasa berat.\n\n(Tips: Tombol Export Excel sudah otomatis mengekspor semua ${total} produk tanpa perlu pilih All.)\n\nLanjutkan menampilkan semua ${total} kolom?`);
+            if (!ok) {
+                renderComparePaginationBar();
+                return;
+            }
+        }
+        comparePageSize = 0;
+        compareCurrentPage = 1;
+        renderComparisonTablePage();
+        return;
+    }
+    const parsed = parseInt(rawSize, 10);
+    if (!Number.isFinite(parsed) || parsed < 5) return;
+    comparePageSize = parsed;
+    compareCurrentPage = 1;
+    renderComparisonTablePage();
+}
+
+function renderComparePaginationBar() {
+    const bar = document.getElementById("comparePaginationBar");
+    if (!bar) return;
+    const total = currentComparisonProducts.length;
+    const isAllMode = comparePageSize <= 0;
+    if ((!isAllMode && total <= comparePageSize) || (isAllMode && total <= 10)) {
+        bar.classList.add("hidden");
+        bar.replaceChildren();
+        return;
+    }
+    const effectiveSize = isAllMode ? Math.max(1, total) : comparePageSize;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(total / effectiveSize));
+    if (compareCurrentPage > totalPages) compareCurrentPage = totalPages;
+    const startIdx = isAllMode ? 0 : (compareCurrentPage - 1) * effectiveSize;
+    const endIdx = isAllMode ? total : Math.min(total, startIdx + effectiveSize);
+    const prevDisabled = isAllMode || compareCurrentPage <= 1;
+    const nextDisabled = isAllMode || compareCurrentPage >= totalPages;
+
+    const btnBase = "px-2 py-1 rounded-lg border text-xs font-semibold transition";
+    const btnActive = "bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-200 border-gray-300 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700 cursor-pointer";
+    const btnDisabled = "bg-gray-100 dark:bg-neutral-800/60 text-gray-400 dark:text-neutral-500 border-gray-200 dark:border-neutral-700 cursor-not-allowed opacity-60";
+
+    bar.innerHTML = `
+        <div class="text-gray-700 dark:text-neutral-300">
+            Showing columns <strong>${startIdx + 1}–${endIdx}</strong> of <strong>${total}</strong> products
+            <span class="text-[11px] text-emerald-700 dark:text-emerald-400 ms-1">(Export Excel still exports all ${total} products)</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1.5 text-gray-600 dark:text-neutral-400">
+                <span>Cols/page:</span>
+                <select data-ev-change="a177" aria-label="Comparison columns per page" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-100 text-xs">
+                    ${[10, 15, 25, 50].map(n => `<option value="${n}" ${!isAllMode && n === comparePageSize ? "selected" : ""}>${n}</option>`).join("")}
+                    <option value="all" ${isAllMode ? "selected" : ""}>All (${total})</option>
+                </select>
+            </label>
+            <div class="flex items-center gap-1">
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}" title="First Page">&laquo;</button>
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([compareCurrentPage - 1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}">&lsaquo; Prev</button>
+                <span class="px-2 font-bold text-gray-800 dark:text-neutral-200">Page ${compareCurrentPage} / ${totalPages}</span>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([compareCurrentPage + 1])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}">Next &rsaquo;</button>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([totalPages])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}" title="Last Page">&raquo;</button>
+            </div>
+        </div>
+    `;
+    bar.classList.remove("hidden");
+}
+
+function renderComparisonTablePage() {
+    const container = document.getElementById("modalTableContainer");
+    if (!container) return;
+    const total = currentComparisonProducts.length;
+    const isAllMode = comparePageSize <= 0;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(total / comparePageSize));
+    if (compareCurrentPage > totalPages) compareCurrentPage = totalPages;
+    const startIdx = isAllMode ? 0 : (compareCurrentPage - 1) * comparePageSize;
+    const pageProducts = isAllMode ? currentComparisonProducts : currentComparisonProducts.slice(startIdx, startIdx + comparePageSize);
+    const prodCount = pageProducts.length;
+
+    renderComparePaginationBar();
 
     container.innerHTML = `
                 <table class="w-full table-fixed text-xs sm:text-sm text-left border-collapse" style="min-width: calc(var(--cmp-feature-col-w, 220px) + ${prodCount} * var(--cmp-prod-col-min-w, 260px));" id="comparisonTable">
                     <colgroup>
                         <col style="width: var(--cmp-feature-col-w, 220px);" />
-                        ${currentComparisonProducts.map(() => `<col style="width: calc((100% - var(--cmp-feature-col-w, 220px)) / ${prodCount});" />`).join('')}
+                        ${pageProducts.map(() => `<col style="width: calc((100% - var(--cmp-feature-col-w, 220px)) / ${prodCount});" />`).join('')}
                     </colgroup>
                     <thead>
                         <tr class="bg-gray-100 dark:bg-neutral-700 border-b dark:border-neutral-600">
                             <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Company Name</th>
-                            ${currentComparisonProducts.map(p => `
+                            ${pageProducts.map(p => `
                                 <th scope="col" class="p-2 sm:p-3 font-semibold text-blue-700 dark:text-blue-300 border-l dark:border-neutral-600 bg-gray-100 dark:bg-neutral-700 break-words">
                                     ${escapeHtml(p.company)}
                                 </th>
@@ -3259,7 +3570,7 @@ async function openComparisonModal(forceProceed = false) {
                         </tr>
                         <tr class="bg-gray-100 dark:bg-neutral-700 border-b-2 dark:border-neutral-600">
                             <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Product Name</th>
-                            ${currentComparisonProducts.map(p => `
+                            ${pageProducts.map(p => `
                                 <th scope="col" class="p-2 sm:p-3 font-bold text-blue-900 dark:text-blue-100 border-l dark:border-neutral-600 bg-gray-100 dark:bg-neutral-700 text-sm sm:text-base break-words">
                                     ${escapeHtml(p.name)}
                                 </th>
@@ -3283,7 +3594,7 @@ async function openComparisonModal(forceProceed = false) {
                                     <td class="p-2 sm:p-3 font-extrabold ${secText} uppercase tracking-wider text-[11px] sm:text-xs break-words">
                                         ${escapeHtml(feat.label)}
                                     </td>
-                                    ${currentComparisonProducts.map(() => `<td class="p-2 sm:p-3 border-l dark:border-neutral-800 ${secCellBg}"></td>`).join('')}
+                                    ${pageProducts.map(() => `<td class="p-2 sm:p-3 border-l dark:border-neutral-800 ${secCellBg}"></td>`).join('')}
                                 </tr>
                     `;
         }
@@ -3296,13 +3607,13 @@ async function openComparisonModal(forceProceed = false) {
         const cellBgClass = feat.isCharge
             ? 'text-xs bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-200 border-t-2 border-amber-100 dark:border-amber-900/60'
             : (feat.isHighlight
-                ? 'text-xs bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-200 border-t-2 border-blue-100 dark:border-neutral-700'
+                ? 'text-xs bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-200 border-t-2 border-blue-100 dark:border-blue-700'
                 : 'bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300');
 
         return `
                                 <tr>
                                     <td class="p-2 sm:p-3 align-middle break-words ${rowBgClass}">${escapeHtml(feat.label)}</td>
-                                    ${currentComparisonProducts.map(p => {
+                                    ${pageProducts.map(p => {
             let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
             const renderedVal = formatListText(val);
             const isDashEmpty = isEmptyVal(val) || renderedVal === "-";
@@ -3318,7 +3629,6 @@ async function openComparisonModal(forceProceed = false) {
                 </table>
             `;
     applyCompareTableZoom(currentCompareTableZoom);
-    compareModal.classList.remove("hidden");
     requestAnimationFrame(() => applyComparisonTableFreeze());
 }
 

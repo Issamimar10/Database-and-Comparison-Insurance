@@ -38,7 +38,7 @@ const IDCM_ACTIONS = {
   a17(el, event, args) { openUploadModal() },
   a18(el, event, args) { openBulkDocUploadModal() },
   a19(el, event, args) { openAdminUsersModal() },
-  a20(el, event, args) { filterData() },
+  a20(el, event, args) { scheduleFilterData() },
   a21(el, event, args) { toggleMobileFilterPanel(event) },
   a22(el, event, args) { toggleDropdown('categoryDropdown', event) },
   a23(el, event, args) { toggleDropdown('companyDropdown', event) },
@@ -191,7 +191,12 @@ const IDCM_ACTIONS = {
   a170(el, event, args) { openAliasEditorForm(args[0]) },
   a171(el, event, args) { deleteAliasManagerEntry(args[0]) },
   a172(el, event, args) { requestAdminUserRoleChange(args[0], el.value) },
-  a173(el, event, args) { deleteAdminUser(args[0]) }
+  a173(el, event, args) { deleteAdminUser(args[0]) },
+  a174(el, event, args) { goToDeckPage(args[0]) },
+  a175(el, event, args) { setDeckPageSize(el.value) },
+  a176(el, event, args) { goToComparePage(args[0]) },
+  a177(el, event, args) { setComparePageSize(el.value) },
+  a178(el, event, args) { toggleDesktopSecondaryFilters(event) }
 };
 
 (function initIdcmEventDelegation() {

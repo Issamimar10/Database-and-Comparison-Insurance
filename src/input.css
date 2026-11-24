@@ -359,3 +359,49 @@
                 min-block-size: 40px;
             }
         }
+
+        /* Defer off-screen product card layout/paint when showing many cards (e.g., Per page: All) */
+        .product-card {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 260px;
+        }
+
+        /* Hybrid Desktop Filter Bar: Train-from-Tunnel Reveal (600ms ease-in-out, constant gap) */
+        .secondary-filters-tray,
+        .secondary-filters-train {
+            display: contents;
+        }
+
+        @media (min-width: 768px) {
+            .secondary-filters-tray {
+                display: flex;
+                justify-content: flex-start;
+                align-items: center;
+                overflow: hidden;
+                width: 0px;
+                margin-right: -0.5rem;
+                pointer-events: none;
+                transition:
+                    width 600ms ease-in-out,
+                    margin-right 600ms ease-in-out;
+            }
+
+            .secondary-filters-tray.is-open {
+                margin-right: 0px;
+                pointer-events: auto;
+            }
+
+            .secondary-filters-train {
+                display: flex;
+                flex-wrap: nowrap;
+                align-items: center;
+                gap: 0.5rem;
+                flex-shrink: 0;
+                width: max-content;
+            }
+
+            .secondary-filters-train > * {
+                flex-shrink: 0;
+                white-space: nowrap;
+            }
+        }

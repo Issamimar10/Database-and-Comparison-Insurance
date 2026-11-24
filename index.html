@@ -447,6 +447,10 @@
                         </div>
                     </div>
 
+                    <!-- Collapsible Secondary Filters (Train-from-Tunnel 600ms ease-in-out on Desktop; flat inside Mobile drawer) -->
+                    <div id="secondaryFiltersTray" class="secondary-filters-tray">
+                    <div id="secondaryFiltersTrain" class="secondary-filters-train">
+
                     <div class="relative custom-select">
                         <button
                             class="w-full md:w-auto min-w-[90px] border dark:border-neutral-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 text-left flex justify-between items-center hover:bg-gray-50 dark:hover:bg-neutral-600 transition"
@@ -504,12 +508,15 @@
                             class="w-full md:w-auto border border-dashed border-blue-400 dark:border-blue-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-blue-50/70 dark:bg-neutral-700/80 text-blue-700 dark:text-blue-300 font-semibold flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-neutral-600 transition"
                             data-ev-click="a29"
                             title="Add or remove custom filters from database columns">
-                            <i class="fa-solid fa-sliders text-xs"></i>
-                            <span>+ Filter</span>
+                            <i class="fa-solid fa-plus text-xs"></i>
+                            <span>Filter</span>
                         </button>
                         <div id="addFilterDropdown" popover="auto"
                             class="dropdown-content hidden absolute right-0 z-50 mt-1 w-64 bg-white dark:bg-neutral-800 border dark:border-neutral-700 rounded-lg shadow-xl max-h-80 overflow-y-auto p-2 text-xs">
                         </div>
+                    </div>
+
+                    </div>
                     </div>
 
                     <!-- Reset All Filters Button -->
@@ -520,16 +527,26 @@
                         <span>Clear All</span>
                     </button>
 
-                    <!-- Sorting Dropdown -->
+                    <!-- Desktop Icon-Only More Filters Toggle (right beside Sort) -->
+                    <button type="button" id="btnDesktopSecondaryFilterToggle" data-ev-click="a178"
+                        aria-expanded="false" aria-controls="secondaryFiltersTray"
+                        aria-label="Toggle More Filters" title="More Filters (Channel, Currency, Launch Year, Underwriting)"
+                        class="hidden md:inline-flex relative w-9 h-9 rounded-lg border border-blue-200 dark:border-neutral-600 bg-blue-50 dark:bg-neutral-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-neutral-600 items-center justify-center shrink-0 transition">
+                        <i id="desktopFilterToggleIcon" class="fa-solid fa-sliders text-sm transition-transform duration-300" aria-hidden="true"></i>
+                        <span id="secondaryFilterCountBadge"
+                            class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-neutral-950 text-[10px] font-extrabold items-center justify-center leading-none shadow-sm">0</span>
+                    </button>
+
+                    <!-- Icon-Only Sorting Dropdown -->
                     <div class="relative custom-select">
                         <button
-                            class="w-full md:w-auto min-w-[95px] border dark:border-neutral-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 bg-blue-50 dark:bg-neutral-700 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-neutral-700 font-medium text-left flex justify-between items-center hover:bg-blue-100 dark:hover:bg-neutral-600 transition"
-                            data-ev-click="a31" title="Sort Products">
+                            class="w-full md:w-9 md:h-9 border dark:border-neutral-600 text-xs sm:text-sm rounded-lg px-2.5 py-1.5 md:p-0 bg-blue-50 dark:bg-neutral-700 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-neutral-600 font-medium flex justify-between md:justify-center items-center hover:bg-blue-100 dark:hover:bg-neutral-600 transition shrink-0"
+                            data-ev-click="a31" aria-label="Sort Products" title="Sort Products">
                             <span class="flex items-center gap-1.5">
-                                <i class="fa-solid fa-arrow-down-short-wide text-xs"></i>
-                                <span id="sortBtnText" class="truncate font-semibold">Sort</span>
+                                <i class="fa-solid fa-arrow-down-short-wide text-sm"></i>
+                                <span id="sortBtnText" class="truncate font-semibold md:sr-only">Sort</span>
                             </span>
-                            <i class="fa-solid fa-chevron-down text-[10px] ml-1.5 text-blue-400"></i>
+                            <i class="fa-solid fa-chevron-down text-[10px] ml-1.5 text-blue-400 md:hidden"></i>
                         </button>
                         <div id="sortDropdown" popover="auto"
                             class="dropdown-content hidden absolute right-0 z-50 mt-1 w-56 bg-white dark:bg-neutral-800 border dark:border-neutral-700 rounded-lg shadow-xl p-1.5 text-xs">
@@ -582,6 +599,8 @@
 
         <!-- AppSheet Deck-Style Grid -->
         <div id="deckGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
+        <!-- Deck Pagination Bar (otomatis tampil jika produk > pageSize) -->
+        <div id="deckPaginationBar" class="hidden mt-5 flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-xl px-4 py-2.5 text-xs shadow-sm"></div>
     </main>
 
     <!-- Floating Comparison Bar -->
@@ -1112,6 +1131,8 @@
                 <button data-ev-click="a78" aria-label="Close Comparison Modal"
                     class="order-2 sm:order-3 w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-slate-800 text-xl leading-none shrink-0">&times;</button>
             </div>
+            <!-- Comparison Column Pagination Bar (otomatis tampil jika produk dibandingkan > pageSize) -->
+            <div id="comparePaginationBar" class="hidden px-3 sm:px-5 py-2 bg-slate-100 dark:bg-neutral-900 border-b border-gray-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0"></div>
             <div class="p-2 sm:p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer" tabindex="0"
                 role="region" aria-labelledby="compareModalTitle" onwheel="handleCompareTableWheel(event)"></div>
         </div>
