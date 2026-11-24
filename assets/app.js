@@ -2723,6 +2723,7 @@ function scheduleFilterData() {
 }
 
 function goToDeckPage(pageNum) {
+    if (deckPageSize <= 0) return;
     const totalPages = Math.max(1, Math.ceil((currentlyVisibleProducts.length || 0) / deckPageSize));
     const next = Math.min(Math.max(1, parseInt(pageNum, 10) || 1), totalPages);
     if (next === deckCurrentPage) return;
@@ -2733,6 +2734,12 @@ function goToDeckPage(pageNum) {
 }
 
 function setDeckPageSize(rawSize) {
+    if (String(rawSize).toLowerCase() === "all" || rawSize === "0" || rawSize === 0) {
+        deckPageSize = 0;
+        deckCurrentPage = 1;
+        renderDeck(currentlyVisibleProducts);
+        return;
+    }
     const parsed = parseInt(rawSize, 10);
     if (!Number.isFinite(parsed) || parsed < 12) return;
     deckPageSize = parsed;
@@ -2743,17 +2750,19 @@ function setDeckPageSize(rawSize) {
 function renderDeckPaginationBar(totalCount) {
     const bar = document.getElementById("deckPaginationBar");
     if (!bar) return;
-    if (totalCount <= deckPageSize) {
+    const isAllMode = deckPageSize <= 0;
+    if ((!isAllMode && totalCount <= deckPageSize) || (isAllMode && totalCount <= 24)) {
         bar.classList.add("hidden");
         bar.replaceChildren();
         return;
     }
-    const totalPages = Math.max(1, Math.ceil(totalCount / deckPageSize));
+    const effectiveSize = isAllMode ? Math.max(1, totalCount) : deckPageSize;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(totalCount / effectiveSize));
     if (deckCurrentPage > totalPages) deckCurrentPage = totalPages;
-    const startIdx = (deckCurrentPage - 1) * deckPageSize;
-    const endIdx = Math.min(totalCount, startIdx + deckPageSize);
-    const prevDisabled = deckCurrentPage <= 1;
-    const nextDisabled = deckCurrentPage >= totalPages;
+    const startIdx = isAllMode ? 0 : (deckCurrentPage - 1) * effectiveSize;
+    const endIdx = isAllMode ? totalCount : Math.min(totalCount, startIdx + effectiveSize);
+    const prevDisabled = isAllMode || deckCurrentPage <= 1;
+    const nextDisabled = isAllMode || deckCurrentPage >= totalPages;
 
     const btnBase = "px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1";
     const btnActive = "bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-300 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-600 cursor-pointer";
@@ -2767,7 +2776,8 @@ function renderDeckPaginationBar(totalCount) {
             <label class="flex items-center gap-1.5 text-gray-500 dark:text-neutral-400">
                 <span>Per page:</span>
                 <select data-ev-change="a175" aria-label="Products per page" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-700 text-gray-800 dark:text-neutral-100 text-xs">
-                    ${[24, 48, 96].map(n => `<option value="${n}" ${n === deckPageSize ? "selected" : ""}>${n}</option>`).join("")}
+                    ${[24, 48, 96].map(n => `<option value="${n}" ${!isAllMode && n === deckPageSize ? "selected" : ""}>${n}</option>`).join("")}
+                    <option value="all" ${isAllMode ? "selected" : ""}>All (${totalCount})</option>
                 </select>
             </label>
             <div class="flex items-center gap-1">
@@ -2793,10 +2803,11 @@ function renderDeck(data) {
         return;
     }
 
-    const totalPages = Math.max(1, Math.ceil(data.length / deckPageSize));
+    const isAllMode = deckPageSize <= 0;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(data.length / deckPageSize));
     if (deckCurrentPage > totalPages) deckCurrentPage = totalPages;
-    const startIdx = (deckCurrentPage - 1) * deckPageSize;
-    const pageData = data.slice(startIdx, startIdx + deckPageSize);
+    const startIdx = isAllMode ? 0 : (deckCurrentPage - 1) * deckPageSize;
+    const pageData = isAllMode ? data : data.slice(startIdx, startIdx + deckPageSize);
 
     const selectedSet = new Set(selectedProductIds);
     const docCountByProdLower = new Map();
@@ -3360,6 +3371,7 @@ let compareCurrentPage = 1;
 let comparePageSize = 15;
 
 function goToComparePage(pageNum) {
+    if (comparePageSize <= 0) return;
     const totalPages = Math.max(1, Math.ceil((currentComparisonProducts.length || 0) / comparePageSize));
     const next = Math.min(Math.max(1, parseInt(pageNum, 10) || 1), totalPages);
     if (next === compareCurrentPage) return;
@@ -3370,6 +3382,20 @@ function goToComparePage(pageNum) {
 }
 
 function setComparePageSize(rawSize) {
+    if (String(rawSize).toLowerCase() === "all" || rawSize === "0" || rawSize === 0) {
+        const total = currentComparisonProducts.length;
+        if (total > 100) {
+            const ok = confirm(`Menampilkan seluruh ${total} kolom produk sekaligus bisa membuat browser terasa berat.\n\n(Tips: Tombol Export Excel sudah otomatis mengekspor semua ${total} produk tanpa perlu pilih All.)\n\nLanjutkan menampilkan semua ${total} kolom?`);
+            if (!ok) {
+                renderComparePaginationBar();
+                return;
+            }
+        }
+        comparePageSize = 0;
+        compareCurrentPage = 1;
+        renderComparisonTablePage();
+        return;
+    }
     const parsed = parseInt(rawSize, 10);
     if (!Number.isFinite(parsed) || parsed < 5) return;
     comparePageSize = parsed;
@@ -3381,17 +3407,19 @@ function renderComparePaginationBar() {
     const bar = document.getElementById("comparePaginationBar");
     if (!bar) return;
     const total = currentComparisonProducts.length;
-    if (total <= comparePageSize) {
+    const isAllMode = comparePageSize <= 0;
+    if ((!isAllMode && total <= comparePageSize) || (isAllMode && total <= 10)) {
         bar.classList.add("hidden");
         bar.replaceChildren();
         return;
     }
-    const totalPages = Math.max(1, Math.ceil(total / comparePageSize));
+    const effectiveSize = isAllMode ? Math.max(1, total) : comparePageSize;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(total / effectiveSize));
     if (compareCurrentPage > totalPages) compareCurrentPage = totalPages;
-    const startIdx = (compareCurrentPage - 1) * comparePageSize;
-    const endIdx = Math.min(total, startIdx + comparePageSize);
-    const prevDisabled = compareCurrentPage <= 1;
-    const nextDisabled = compareCurrentPage >= totalPages;
+    const startIdx = isAllMode ? 0 : (compareCurrentPage - 1) * effectiveSize;
+    const endIdx = isAllMode ? total : Math.min(total, startIdx + effectiveSize);
+    const prevDisabled = isAllMode || compareCurrentPage <= 1;
+    const nextDisabled = isAllMode || compareCurrentPage >= totalPages;
 
     const btnBase = "px-2 py-1 rounded-lg border text-xs font-semibold transition";
     const btnActive = "bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-200 border-gray-300 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700 cursor-pointer";
@@ -3406,7 +3434,8 @@ function renderComparePaginationBar() {
             <label class="flex items-center gap-1.5 text-gray-600 dark:text-neutral-400">
                 <span>Cols/page:</span>
                 <select data-ev-change="a177" aria-label="Comparison columns per page" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-100 text-xs">
-                    ${[10, 15, 25, 50].map(n => `<option value="${n}" ${n === comparePageSize ? "selected" : ""}>${n}</option>`).join("")}
+                    ${[10, 15, 25, 50].map(n => `<option value="${n}" ${!isAllMode && n === comparePageSize ? "selected" : ""}>${n}</option>`).join("")}
+                    <option value="all" ${isAllMode ? "selected" : ""}>All (${total})</option>
                 </select>
             </label>
             <div class="flex items-center gap-1">
@@ -3425,10 +3454,11 @@ function renderComparisonTablePage() {
     const container = document.getElementById("modalTableContainer");
     if (!container) return;
     const total = currentComparisonProducts.length;
-    const totalPages = Math.max(1, Math.ceil(total / comparePageSize));
+    const isAllMode = comparePageSize <= 0;
+    const totalPages = isAllMode ? 1 : Math.max(1, Math.ceil(total / comparePageSize));
     if (compareCurrentPage > totalPages) compareCurrentPage = totalPages;
-    const startIdx = (compareCurrentPage - 1) * comparePageSize;
-    const pageProducts = currentComparisonProducts.slice(startIdx, startIdx + comparePageSize);
+    const startIdx = isAllMode ? 0 : (compareCurrentPage - 1) * comparePageSize;
+    const pageProducts = isAllMode ? currentComparisonProducts : currentComparisonProducts.slice(startIdx, startIdx + comparePageSize);
     const prodCount = pageProducts.length;
 
     renderComparePaginationBar();

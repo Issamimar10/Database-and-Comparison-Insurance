@@ -359,3 +359,9 @@
                 min-block-size: 40px;
             }
         }
+
+        /* Defer off-screen product card layout/paint when showing many cards (e.g., Per page: All) */
+        .product-card {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 260px;
+        }
