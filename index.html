@@ -582,6 +582,8 @@
 
         <!-- AppSheet Deck-Style Grid -->
         <div id="deckGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
+        <!-- Deck Pagination Bar (otomatis tampil jika produk > pageSize) -->
+        <div id="deckPaginationBar" class="hidden mt-5 flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-xl px-4 py-2.5 text-xs shadow-sm"></div>
     </main>
 
     <!-- Floating Comparison Bar -->
@@ -1112,6 +1114,8 @@
                 <button data-ev-click="a78" aria-label="Close Comparison Modal"
                     class="order-2 sm:order-3 w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-slate-800 text-xl leading-none shrink-0">&times;</button>
             </div>
+            <!-- Comparison Column Pagination Bar (otomatis tampil jika produk dibandingkan > pageSize) -->
+            <div id="comparePaginationBar" class="hidden px-3 sm:px-5 py-2 bg-slate-100 dark:bg-neutral-900 border-b border-gray-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0"></div>
             <div class="p-2 sm:p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer" tabindex="0"
                 role="region" aria-labelledby="compareModalTitle" onwheel="handleCompareTableWheel(event)"></div>
         </div>

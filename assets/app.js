@@ -2710,6 +2710,78 @@ function getCategoryBadge(category) {
     return `<span class="bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">${safeCat}</span>`;
 }
 
+let deckCurrentPage = 1;
+let deckPageSize = 48;
+let _searchFilterDebounceTimer = null;
+
+function scheduleFilterData() {
+    if (_searchFilterDebounceTimer) clearTimeout(_searchFilterDebounceTimer);
+    _searchFilterDebounceTimer = setTimeout(() => {
+        _searchFilterDebounceTimer = null;
+        filterData();
+    }, 150);
+}
+
+function goToDeckPage(pageNum) {
+    const totalPages = Math.max(1, Math.ceil((currentlyVisibleProducts.length || 0) / deckPageSize));
+    const next = Math.min(Math.max(1, parseInt(pageNum, 10) || 1), totalPages);
+    if (next === deckCurrentPage) return;
+    deckCurrentPage = next;
+    renderDeck(currentlyVisibleProducts);
+    const grid = document.getElementById("deckGrid");
+    if (grid) grid.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function setDeckPageSize(rawSize) {
+    const parsed = parseInt(rawSize, 10);
+    if (!Number.isFinite(parsed) || parsed < 12) return;
+    deckPageSize = parsed;
+    deckCurrentPage = 1;
+    renderDeck(currentlyVisibleProducts);
+}
+
+function renderDeckPaginationBar(totalCount) {
+    const bar = document.getElementById("deckPaginationBar");
+    if (!bar) return;
+    if (totalCount <= deckPageSize) {
+        bar.classList.add("hidden");
+        bar.replaceChildren();
+        return;
+    }
+    const totalPages = Math.max(1, Math.ceil(totalCount / deckPageSize));
+    if (deckCurrentPage > totalPages) deckCurrentPage = totalPages;
+    const startIdx = (deckCurrentPage - 1) * deckPageSize;
+    const endIdx = Math.min(totalCount, startIdx + deckPageSize);
+    const prevDisabled = deckCurrentPage <= 1;
+    const nextDisabled = deckCurrentPage >= totalPages;
+
+    const btnBase = "px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1";
+    const btnActive = "bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-300 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-600 cursor-pointer";
+    const btnDisabled = "bg-gray-100 dark:bg-neutral-800 text-gray-400 dark:text-neutral-500 border-gray-200 dark:border-neutral-700 cursor-not-allowed opacity-60";
+
+    bar.innerHTML = `
+        <div class="text-gray-600 dark:text-neutral-300">
+            Showing <strong>${startIdx + 1}–${endIdx}</strong> of <strong>${totalCount}</strong> products
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1.5 text-gray-500 dark:text-neutral-400">
+                <span>Per page:</span>
+                <select data-ev-change="a175" aria-label="Products per page" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-700 text-gray-800 dark:text-neutral-100 text-xs">
+                    ${[24, 48, 96].map(n => `<option value="${n}" ${n === deckPageSize ? "selected" : ""}>${n}</option>`).join("")}
+                </select>
+            </label>
+            <div class="flex items-center gap-1">
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}" title="First Page">&laquo;</button>
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([deckCurrentPage - 1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}">&lsaquo; Prev</button>
+                <span class="px-2.5 py-1 font-bold text-gray-700 dark:text-neutral-200">Page ${deckCurrentPage} / ${totalPages}</span>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([deckCurrentPage + 1])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}">Next &rsaquo;</button>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a174" data-ev-click-args="${idcmPackArgs([totalPages])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}" title="Last Page">&raquo;</button>
+            </div>
+        </div>
+    `;
+    bar.classList.remove("hidden");
+}
+
 function renderDeck(data) {
     const grid = document.getElementById("deckGrid");
     document.getElementById("totalProductCount").textContent = `${data.length} Products`;
@@ -2717,15 +2789,31 @@ function renderDeck(data) {
 
     if (data.length === 0) {
         grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-500 dark:text-neutral-400">No products found matching your filters</div>`;
+        renderDeckPaginationBar(0);
         return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(data.length / deckPageSize));
+    if (deckCurrentPage > totalPages) deckCurrentPage = totalPages;
+    const startIdx = (deckCurrentPage - 1) * deckPageSize;
+    const pageData = data.slice(startIdx, startIdx + deckPageSize);
+
+    const selectedSet = new Set(selectedProductIds);
+    const docCountByProdLower = new Map();
+    if (Array.isArray(productDocuments)) {
+        for (let i = 0; i < productDocuments.length; i++) {
+            const k = String((productDocuments[i] && productDocuments[i].productName) || "").trim().toLowerCase();
+            if (k) docCountByProdLower.set(k, (docCountByProdLower.get(k) || 0) + 1);
+        }
     }
 
     const benefitCols = getBenefitColumns();
     const frag = document.createDocumentFragment();
 
-    data.forEach(p => {
-        const isSelected = selectedProductIds.includes(p.id);
+    pageData.forEach(p => {
+        const isSelected = selectedSet.has(p.id);
         const card = document.createElement("div");
+        card.dataset.productId = String(p.id);
         card.className = `product-card bg-white dark:bg-neutral-800 rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-gray-200 dark:border-neutral-700'} hover:shadow-md transition-shadow p-5 flex flex-col justify-between relative`;
 
         let previewBenefitKey = benefitCols.find(k => k.toLowerCase().includes("death benefit") && !isEmptyVal(p.attributes[k])) || benefitCols.find(k => !isEmptyVal(p.attributes[k])) || "";
@@ -2742,6 +2830,8 @@ function renderDeck(data) {
                             <strong class="text-gray-800 dark:text-neutral-200 block">${escapeHtml(previewBenefitKey)}:</strong> ${formatListText(previewVal)}
                            </div>`
                 : '');
+
+        const docCount = docCountByProdLower.get(String(p.name || "").trim().toLowerCase()) || 0;
 
         card.innerHTML = `
                     <div class="flex-1 cursor-pointer group/cardbody" data-ev-click="a115" data-ev-click-args="${idcmPackArgs([p.id])}">
@@ -2763,15 +2853,12 @@ function renderDeck(data) {
                                     <i class="fa-regular fa-calendar-check me-1"></i>${escapeHtml(formatDisplayDate(p.launchDate))}
                                 </span>
                             ` : ''}
-                            ${(() => {
-                const docCount = getDocumentsForProduct(p.name).length;
-                return docCount > 0 ? `
-                                    <span>&bull;</span>
-                                    <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium" title="${docCount} Documents Available">
-                                        <i class="fa-solid fa-paperclip me-1"></i>${docCount} Doc${docCount > 1 ? 's' : ''}
-                                    </span>
-                                ` : '';
-            })()}
+                            ${docCount > 0 ? `
+                                <span>&bull;</span>
+                                <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium" title="${docCount} Documents Available">
+                                    <i class="fa-solid fa-paperclip me-1"></i>${docCount} Doc${docCount > 1 ? 's' : ''}
+                                </span>
+                            ` : ''}
                         </div>
                         
                         ${previewCardHtml}
@@ -2779,7 +2866,7 @@ function renderDeck(data) {
 
                     <div class="pt-3 border-t dark:border-neutral-700 flex justify-between items-center text-xs">
                         <button data-ev-click="a115" data-ev-click-args="${idcmPackArgs([p.id])}" class="text-blue-600 dark:text-blue-400 hover:underline font-medium">View Details</button>
-                        <button data-ev-click="a116" data-ev-click-args="${idcmPackArgs([p.id])}" class="px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-200 dark:border-neutral-600 hover:bg-gray-50 dark:hover:bg-neutral-600'}">
+                        <button data-select-btn="1" data-ev-click="a116" data-ev-click-args="${idcmPackArgs([p.id])}" class="px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-200 dark:border-neutral-600 hover:bg-gray-50 dark:hover:bg-neutral-600'}">
                             <i class="fa-solid ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Selected' : 'Select'}
                         </button>
                     </div>
@@ -2787,9 +2874,24 @@ function renderDeck(data) {
         frag.appendChild(card);
     });
     grid.appendChild(frag);
+    renderDeckPaginationBar(data.length);
+}
+
+function updateCardSelectionUI(id, isSelected) {
+    const grid = document.getElementById("deckGrid");
+    if (!grid) return;
+    const card = grid.querySelector(`.product-card[data-product-id="${CSS.escape(String(id))}"]`);
+    if (!card) return;
+    card.className = `product-card bg-white dark:bg-neutral-800 rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-gray-200 dark:border-neutral-700'} hover:shadow-md transition-shadow p-5 flex flex-col justify-between relative`;
+    const btn = card.querySelector('button[data-select-btn="1"]');
+    if (btn) {
+        btn.className = `px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-neutral-700 text-gray-700 dark:text-neutral-200 border-gray-200 dark:border-neutral-600 hover:bg-gray-50 dark:hover:bg-neutral-600'}`;
+        btn.innerHTML = `<i class="fa-solid ${isSelected ? 'fa-check' : 'fa-plus'}"></i> ${isSelected ? 'Selected' : 'Select'}`;
+    }
 }
 
 function filterData() {
+    deckCurrentPage = 1;
     currentlyVisibleProducts = getProductsMatchingAllExcept(null);
     currentlyVisibleProducts = sortProducts(currentlyVisibleProducts);
     populateAllDropdowns();
@@ -2800,25 +2902,31 @@ function filterData() {
 
 function toggleSelectProduct(id, e) {
     e.stopPropagation();
-    if (selectedProductIds.includes(id)) {
-        selectedProductIds = selectedProductIds.filter(pid => pid !== id);
+    const idx = selectedProductIds.indexOf(id);
+    let nowSelected;
+    if (idx !== -1) {
+        selectedProductIds.splice(idx, 1);
+        nowSelected = false;
     } else {
         selectedProductIds.push(id);
+        nowSelected = true;
     }
     updateCompareBar();
-    renderDeck(currentlyVisibleProducts);
+    updateCardSelectionUI(id, nowSelected);
 }
 
 function selectAllVisible() {
     if (!currentlyVisibleProducts || currentlyVisibleProducts.length === 0) return;
 
-    const allVisibleSelected = currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
+    const selectedSet = new Set(selectedProductIds);
+    const allVisibleSelected = currentlyVisibleProducts.every(p => selectedSet.has(p.id));
     if (allVisibleSelected) {
         const visibleSet = new Set(currentlyVisibleProducts.map(p => p.id));
         selectedProductIds = selectedProductIds.filter(id => !visibleSet.has(id));
     } else {
         currentlyVisibleProducts.forEach(p => {
-            if (!selectedProductIds.includes(p.id)) {
+            if (!selectedSet.has(p.id)) {
+                selectedSet.add(p.id);
                 selectedProductIds.push(p.id);
             }
         });
@@ -2838,8 +2946,9 @@ function updateCompareBar() {
 
     const btnSelectAll = document.getElementById("btnSelectAllVisible");
     if (btnSelectAll) {
+        const selectedSet = new Set(selectedProductIds);
         const allVisibleSelected = currentlyVisibleProducts.length > 0 &&
-            currentlyVisibleProducts.every(p => selectedProductIds.includes(p.id));
+            currentlyVisibleProducts.every(p => selectedSet.has(p.id));
         if (allVisibleSelected) {
             btnSelectAll.innerHTML = `<i class="fa-solid fa-xmark me-1" aria-hidden="true"></i> Deselect All`;
             btnSelectAll.className = "col-span-2 sm:col-auto justify-self-end sm:justify-self-auto text-[11px] sm:text-xs md:text-sm bg-amber-600/90 hover:bg-amber-600 px-2 sm:px-3 py-1.5 rounded-lg transition text-white font-medium border border-amber-400/50 whitespace-nowrap";
@@ -3050,8 +3159,9 @@ function proceedCrossCategoryComparison() {
 async function openComparisonModal(forceProceed = false) {
     const container = document.getElementById("modalTableContainer");
     const compareModal = document.getElementById("compareModal");
+    const selectedSet = new Set(selectedProductIds);
     currentComparisonProducts = sortComparisonProductsAstraFirst(
-        products.filter(p => selectedProductIds.includes(p.id))
+        products.filter(p => selectedSet.has(p.id))
     );
     if (currentComparisonProducts.length === 0) return;
 
@@ -3116,8 +3226,9 @@ async function openComparisonModal(forceProceed = false) {
 
         await ensureFullProductDataLoaded();
         if (compareModal.classList.contains("hidden")) return;
+        const selectedSetAfter = new Set(selectedProductIds);
         currentComparisonProducts = sortComparisonProductsAstraFirst(
-            products.filter(p => selectedProductIds.includes(p.id))
+            products.filter(p => selectedSetAfter.has(p.id))
         );
         if (currentComparisonProducts.length === 0) return;
     }
@@ -3240,18 +3351,98 @@ async function openComparisonModal(forceProceed = false) {
         currentComparisonFeatures.push(feat);
     });
 
-    const prodCount = currentComparisonProducts.length;
+    compareCurrentPage = 1;
+    renderComparisonTablePage();
+    compareModal.classList.remove("hidden");
+}
+
+let compareCurrentPage = 1;
+let comparePageSize = 15;
+
+function goToComparePage(pageNum) {
+    const totalPages = Math.max(1, Math.ceil((currentComparisonProducts.length || 0) / comparePageSize));
+    const next = Math.min(Math.max(1, parseInt(pageNum, 10) || 1), totalPages);
+    if (next === compareCurrentPage) return;
+    compareCurrentPage = next;
+    renderComparisonTablePage();
+    const container = document.getElementById("modalTableContainer");
+    if (container) container.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}
+
+function setComparePageSize(rawSize) {
+    const parsed = parseInt(rawSize, 10);
+    if (!Number.isFinite(parsed) || parsed < 5) return;
+    comparePageSize = parsed;
+    compareCurrentPage = 1;
+    renderComparisonTablePage();
+}
+
+function renderComparePaginationBar() {
+    const bar = document.getElementById("comparePaginationBar");
+    if (!bar) return;
+    const total = currentComparisonProducts.length;
+    if (total <= comparePageSize) {
+        bar.classList.add("hidden");
+        bar.replaceChildren();
+        return;
+    }
+    const totalPages = Math.max(1, Math.ceil(total / comparePageSize));
+    if (compareCurrentPage > totalPages) compareCurrentPage = totalPages;
+    const startIdx = (compareCurrentPage - 1) * comparePageSize;
+    const endIdx = Math.min(total, startIdx + comparePageSize);
+    const prevDisabled = compareCurrentPage <= 1;
+    const nextDisabled = compareCurrentPage >= totalPages;
+
+    const btnBase = "px-2 py-1 rounded-lg border text-xs font-semibold transition";
+    const btnActive = "bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-200 border-gray-300 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700 cursor-pointer";
+    const btnDisabled = "bg-gray-100 dark:bg-neutral-800/60 text-gray-400 dark:text-neutral-500 border-gray-200 dark:border-neutral-700 cursor-not-allowed opacity-60";
+
+    bar.innerHTML = `
+        <div class="text-gray-700 dark:text-neutral-300">
+            Showing columns <strong>${startIdx + 1}–${endIdx}</strong> of <strong>${total}</strong> products
+            <span class="text-[11px] text-emerald-700 dark:text-emerald-400 ms-1">(Export Excel still exports all ${total} products)</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1.5 text-gray-600 dark:text-neutral-400">
+                <span>Cols/page:</span>
+                <select data-ev-change="a177" aria-label="Comparison columns per page" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-100 text-xs">
+                    ${[10, 15, 25, 50].map(n => `<option value="${n}" ${n === comparePageSize ? "selected" : ""}>${n}</option>`).join("")}
+                </select>
+            </label>
+            <div class="flex items-center gap-1">
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}" title="First Page">&laquo;</button>
+                <button type="button" ${prevDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([compareCurrentPage - 1])}" class="${btnBase} ${prevDisabled ? btnDisabled : btnActive}">&lsaquo; Prev</button>
+                <span class="px-2 font-bold text-gray-800 dark:text-neutral-200">Page ${compareCurrentPage} / ${totalPages}</span>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([compareCurrentPage + 1])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}">Next &rsaquo;</button>
+                <button type="button" ${nextDisabled ? "disabled" : ""} data-ev-click="a176" data-ev-click-args="${idcmPackArgs([totalPages])}" class="${btnBase} ${nextDisabled ? btnDisabled : btnActive}" title="Last Page">&raquo;</button>
+            </div>
+        </div>
+    `;
+    bar.classList.remove("hidden");
+}
+
+function renderComparisonTablePage() {
+    const container = document.getElementById("modalTableContainer");
+    if (!container) return;
+    const total = currentComparisonProducts.length;
+    const totalPages = Math.max(1, Math.ceil(total / comparePageSize));
+    if (compareCurrentPage > totalPages) compareCurrentPage = totalPages;
+    const startIdx = (compareCurrentPage - 1) * comparePageSize;
+    const pageProducts = currentComparisonProducts.slice(startIdx, startIdx + comparePageSize);
+    const prodCount = pageProducts.length;
+
+    renderComparePaginationBar();
 
     container.innerHTML = `
                 <table class="w-full table-fixed text-xs sm:text-sm text-left border-collapse" style="min-width: calc(var(--cmp-feature-col-w, 220px) + ${prodCount} * var(--cmp-prod-col-min-w, 260px));" id="comparisonTable">
                     <colgroup>
                         <col style="width: var(--cmp-feature-col-w, 220px);" />
-                        ${currentComparisonProducts.map(() => `<col style="width: calc((100% - var(--cmp-feature-col-w, 220px)) / ${prodCount});" />`).join('')}
+                        ${pageProducts.map(() => `<col style="width: calc((100% - var(--cmp-feature-col-w, 220px)) / ${prodCount});" />`).join('')}
                     </colgroup>
                     <thead>
                         <tr class="bg-gray-100 dark:bg-neutral-700 border-b dark:border-neutral-600">
                             <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Company Name</th>
-                            ${currentComparisonProducts.map(p => `
+                            ${pageProducts.map(p => `
                                 <th scope="col" class="p-2 sm:p-3 font-semibold text-blue-700 dark:text-blue-300 border-l dark:border-neutral-600 bg-gray-100 dark:bg-neutral-700 break-words">
                                     ${escapeHtml(p.company)}
                                 </th>
@@ -3259,7 +3450,7 @@ async function openComparisonModal(forceProceed = false) {
                         </tr>
                         <tr class="bg-gray-100 dark:bg-neutral-700 border-b-2 dark:border-neutral-600">
                             <th scope="row" class="p-2 sm:p-3 font-semibold text-gray-700 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-700 break-words" style="width: var(--cmp-feature-col-w, 220px);">Product Name</th>
-                            ${currentComparisonProducts.map(p => `
+                            ${pageProducts.map(p => `
                                 <th scope="col" class="p-2 sm:p-3 font-bold text-blue-900 dark:text-blue-100 border-l dark:border-neutral-600 bg-gray-100 dark:bg-neutral-700 text-sm sm:text-base break-words">
                                     ${escapeHtml(p.name)}
                                 </th>
@@ -3283,7 +3474,7 @@ async function openComparisonModal(forceProceed = false) {
                                     <td class="p-2 sm:p-3 font-extrabold ${secText} uppercase tracking-wider text-[11px] sm:text-xs break-words">
                                         ${escapeHtml(feat.label)}
                                     </td>
-                                    ${currentComparisonProducts.map(() => `<td class="p-2 sm:p-3 border-l dark:border-neutral-800 ${secCellBg}"></td>`).join('')}
+                                    ${pageProducts.map(() => `<td class="p-2 sm:p-3 border-l dark:border-neutral-800 ${secCellBg}"></td>`).join('')}
                                 </tr>
                     `;
         }
@@ -3296,13 +3487,13 @@ async function openComparisonModal(forceProceed = false) {
         const cellBgClass = feat.isCharge
             ? 'text-xs bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-200 border-t-2 border-amber-100 dark:border-amber-900/60'
             : (feat.isHighlight
-                ? 'text-xs bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-200 border-t-2 border-blue-100 dark:border-neutral-700'
+                ? 'text-xs bg-white dark:bg-neutral-800 text-gray-800 dark:text-neutral-200 border-t-2 border-blue-100 dark:border-blue-700'
                 : 'bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300');
 
         return `
                                 <tr>
                                     <td class="p-2 sm:p-3 align-middle break-words ${rowBgClass}">${escapeHtml(feat.label)}</td>
-                                    ${currentComparisonProducts.map(p => {
+                                    ${pageProducts.map(p => {
             let val = feat.isAttr ? p.attributes[feat.key] : p[feat.key];
             const renderedVal = formatListText(val);
             const isDashEmpty = isEmptyVal(val) || renderedVal === "-";
@@ -3318,7 +3509,6 @@ async function openComparisonModal(forceProceed = false) {
                 </table>
             `;
     applyCompareTableZoom(currentCompareTableZoom);
-    compareModal.classList.remove("hidden");
     requestAnimationFrame(() => applyComparisonTableFreeze());
 }
 
