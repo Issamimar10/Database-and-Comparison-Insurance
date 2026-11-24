@@ -107,19 +107,97 @@ function updateThemeUI() {
         : "Switch to Dark Mode";
 }
 
-let themeSwitchTimer = null;
-function toggleTheme() {
-    const htmlEl = document.documentElement;
-    htmlEl.classList.add('theme-switching');
-    htmlEl.classList.toggle('dark');
-    const isDark = htmlEl.classList.contains('dark');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-    updateThemeUI();
+function updateAnimationToggleUI() {
+    const isOff = document.documentElement.classList.contains('no-animations');
+    const btn = document.getElementById('animToggleBtn');
+    const icon = document.getElementById('animToggleIcon');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', String(!isOff));
+    btn.title = isOff ? "Animations: OFF (Click to enable)" : "Animations: ON (Click to disable)";
+    btn.classList.toggle('opacity-55', isOff);
+    if (icon) {
+        icon.className = isOff
+            ? "fa-solid fa-ban text-xs sm:text-sm text-gray-300 dark:text-neutral-400"
+            : "fa-solid fa-wand-magic-sparkles text-xs sm:text-sm text-amber-300";
+    }
+}
 
+function toggleUiAnimations() {
+    const htmlEl = document.documentElement;
+    const isOff = htmlEl.classList.toggle('no-animations');
+    try {
+        localStorage.setItem('idcm_animations', isOff ? 'off' : 'on');
+    } catch (e) { }
+    updateAnimationToggleUI();
+}
+
+let themeSwitchTimer = null;
+function toggleTheme(event, triggerEl) {
+    const htmlEl = document.documentElement;
+    const applySwitch = () => {
+        htmlEl.classList.toggle('dark');
+        const isDark = htmlEl.classList.contains('dark');
+        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        updateThemeUI();
+    };
+
+    const animationsDisabled =
+        htmlEl.classList.contains('no-animations') ||
+        (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+    // Circular Ripple 550ms via View Transitions API (Desktop + Smartphone)
+    if (!animationsDisabled && typeof document.startViewTransition === 'function') {
+        let x = window.innerWidth - 40;
+        let y = 32;
+        if (triggerEl && typeof triggerEl.getBoundingClientRect === 'function') {
+            const rect = triggerEl.getBoundingClientRect();
+            x = rect.left + rect.width / 2;
+            y = rect.top + rect.height / 2;
+        } else if (event && typeof event.clientX === 'number' && (event.clientX || event.clientY)) {
+            x = event.clientX;
+            y = event.clientY;
+        }
+        const endRadius = Math.hypot(
+            Math.max(x, window.innerWidth - x),
+            Math.max(y, window.innerHeight - y)
+        );
+        try {
+            const transition = document.startViewTransition(() => {
+                applySwitch();
+            });
+            transition.ready.then(() => {
+                document.documentElement.animate(
+                    {
+                        clipPath: [
+                            `circle(0px at ${x}px ${y}px)`,
+                            `circle(${endRadius}px at ${x}px ${y}px)`
+                        ]
+                    },
+                    {
+                        duration: 550,
+                        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                        pseudoElement: '::view-transition-new(root)'
+                    }
+                );
+            }).catch(() => { });
+            return;
+        } catch (e) { }
+    }
+
+    // Fallback (saat animasi OFF atau browser lama)
+    htmlEl.classList.add('theme-switching');
+    applySwitch();
     if (themeSwitchTimer) clearTimeout(themeSwitchTimer);
     themeSwitchTimer = setTimeout(() => {
         htmlEl.classList.remove('theme-switching');
     }, 60);
+}
+
+// Sinkronkan tampilan ikon tombol Animations ON/OFF segera saat DOM siap
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', updateAnimationToggleUI);
+} else {
+    updateAnimationToggleUI();
 }
 
 // --- DATE & DOCUMENT FORMAT HELPERS ---

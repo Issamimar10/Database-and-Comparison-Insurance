@@ -15,6 +15,9 @@
                         document.documentElement.classList.add('dark');
                     }
                 }
+                if (localStorage.getItem('idcm_animations') === 'off') {
+                    document.documentElement.classList.add('no-animations');
+                }
             } catch (e) { }
         })();
 
