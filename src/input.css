@@ -374,26 +374,27 @@
         @media (min-width: 768px) {
             .secondary-filters-tray {
                 display: flex;
-                flex-wrap: wrap;
+                flex-wrap: nowrap;
                 align-items: center;
                 justify-content: flex-end;
                 gap: 0.5rem;
                 overflow: hidden;
                 max-width: 0px;
-                max-height: 0px;
                 opacity: 0;
-                transform: translateX(10px);
+                transform: translateX(12px);
                 pointer-events: none;
                 transition:
-                    max-width 420ms ease-in-out,
-                    max-height 360ms ease-in-out,
-                    opacity 280ms ease-in-out,
-                    transform 380ms ease-in-out;
+                    max-width 360ms ease-in-out,
+                    opacity 260ms ease-in-out,
+                    transform 340ms ease-in-out;
+            }
+
+            .secondary-filters-tray > * {
+                flex-shrink: 0;
+                white-space: nowrap;
             }
 
             .secondary-filters-tray.is-open {
-                max-width: 980px;
-                max-height: 240px;
                 opacity: 1;
                 transform: translateX(0);
                 pointer-events: auto;

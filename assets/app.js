@@ -1486,6 +1486,8 @@ function toggleDesktopSecondaryFilters(e) {
     const icon = document.getElementById("desktopFilterToggleIcon");
     if (!tray || !btn) return;
     const isNowOpen = tray.classList.toggle("is-open");
+    // Gunakan scrollWidth aktual agar animasi ease-in-out halus tanpa jeda kosong & tanpa melompat 2 baris
+    tray.style.maxWidth = isNowOpen ? `${Math.max(tray.scrollWidth + 8, 520)}px` : "0px";
     btn.setAttribute("aria-expanded", String(isNowOpen));
     btn.classList.toggle("bg-blue-600", isNowOpen);
     btn.classList.toggle("text-white", isNowOpen);
