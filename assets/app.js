@@ -1572,7 +1572,7 @@ function toggleDesktopSecondaryFilters(e) {
         _secondaryTrayTimer = null;
     }
     const isNowOpen = !tray.classList.contains("is-open");
-    const animOff = document.documentElement.classList.contains("animations-disabled");
+    const animOff = document.documentElement.classList.contains("no-animations");
     const availWidth = container ? Math.max(240, container.clientWidth) : 9999;
 
     if (isNowOpen) {
