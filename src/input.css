@@ -379,16 +379,25 @@
                 align-items: center;
                 overflow: hidden;
                 width: 0px;
+                max-width: 100%;
                 margin-right: -0.5rem;
                 pointer-events: none;
                 transition:
                     width 600ms ease-in-out,
-                    margin-right 600ms ease-in-out;
+                    margin-right 600ms ease-in-out,
+                    max-height 350ms ease-in-out,
+                    opacity 280ms ease-in-out;
             }
 
             .secondary-filters-tray.is-open {
                 margin-right: 0px;
                 pointer-events: auto;
+            }
+
+            .secondary-filters-tray.is-open.is-settled {
+                width: auto;
+                max-width: 100%;
+                overflow: visible;
             }
 
             .secondary-filters-train {
@@ -398,6 +407,14 @@
                 gap: 0.5rem;
                 flex-shrink: 0;
                 width: max-content;
+            }
+
+            .secondary-filters-tray.is-open.is-settled .secondary-filters-train {
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                width: auto;
+                max-width: 100%;
+                flex-shrink: 1;
             }
 
             .secondary-filters-train > * {

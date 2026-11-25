@@ -1563,6 +1563,7 @@ function toggleDesktopSecondaryFilters(e) {
     if (e) e.stopPropagation();
     const tray = document.getElementById("secondaryFiltersTray");
     const train = document.getElementById("secondaryFiltersTrain");
+    const container = document.getElementById("filterContainer");
     const btn = document.getElementById("btnDesktopSecondaryFilterToggle");
     const icon = document.getElementById("desktopFilterToggleIcon");
     if (!tray || !btn) return;
@@ -1571,23 +1572,85 @@ function toggleDesktopSecondaryFilters(e) {
         _secondaryTrayTimer = null;
     }
     const isNowOpen = !tray.classList.contains("is-open");
-    const exactWidth = (train ? train.scrollWidth : tray.scrollWidth);
+    const animOff = document.documentElement.classList.contains("animations-disabled");
+    const availWidth = container ? Math.max(240, container.clientWidth) : 9999;
+
     if (isNowOpen) {
-        tray.style.width = `${exactWidth}px`;
-        tray.classList.add("is-open");
-        // Setelah animasi 600ms selesai, set width: auto agar penambahan custom filter via + Filter ikut meluas otomatis
-        _secondaryTrayTimer = setTimeout(() => {
-            if (tray.classList.contains("is-open")) {
-                tray.style.width = "auto";
-            }
-            _secondaryTrayTimer = null;
-        }, 620);
+        tray.style.maxHeight = "";
+        tray.style.opacity = "";
+        tray.style.overflow = "";
+        tray.classList.remove("is-settled");
+        const exactWidth = (train ? train.scrollWidth : tray.scrollWidth);
+        const fitsSingleRow = exactWidth <= availWidth;
+
+        if (animOff) {
+            tray.style.width = "";
+            tray.classList.add("is-open", "is-settled");
+        } else if (fitsSingleRow) {
+            // Single-row: animasi klasik train-from-tunnel 600ms, lalu settle agar bisa wrap saat user tambah banyak custom filter
+            tray.style.width = `${exactWidth}px`;
+            tray.classList.add("is-open");
+            _secondaryTrayTimer = setTimeout(() => {
+                if (tray.classList.contains("is-open")) {
+                    tray.classList.add("is-settled");
+                    tray.style.width = "";
+                }
+                _secondaryTrayTimer = null;
+            }, 620);
+        } else {
+            // Multi-row (sudah ada banyak custom filter): langsung wrap di dalam kotak & animasi buka vertikal mulus
+            tray.style.width = "";
+            tray.classList.add("is-open", "is-settled");
+            tray.style.overflow = "hidden";
+            tray.style.maxHeight = "0px";
+            tray.style.opacity = "0";
+            tray.offsetHeight; // force reflow
+            const targetH = Math.max(44, tray.scrollHeight);
+            tray.style.maxHeight = `${targetH}px`;
+            tray.style.opacity = "1";
+            _secondaryTrayTimer = setTimeout(() => {
+                if (tray.classList.contains("is-open")) {
+                    tray.style.maxHeight = "";
+                    tray.style.opacity = "";
+                    tray.style.overflow = "";
+                }
+                _secondaryTrayTimer = null;
+            }, 380);
+        }
     } else {
-        // Kunci lebar aktual sebelum animasi tutup 600ms agar kereta mundur mulus tanpa lompatan
-        tray.style.width = `${exactWidth}px`;
-        tray.offsetWidth; // force reflow
-        tray.classList.remove("is-open");
-        tray.style.width = "0px";
+        const rect = tray.getBoundingClientRect();
+        const isMultiRow = rect.height > 48;
+
+        if (animOff) {
+            tray.classList.remove("is-open", "is-settled");
+            tray.style.width = "0px";
+            tray.style.maxHeight = "";
+            tray.style.opacity = "";
+            tray.style.overflow = "";
+        } else if (isMultiRow) {
+            // Multi-row: tutup vertikal mulus di dalam kotak sebelum reset ke width 0px
+            tray.style.overflow = "hidden";
+            tray.style.maxHeight = `${Math.ceil(rect.height)}px`;
+            tray.style.opacity = "1";
+            tray.offsetHeight; // force reflow
+            tray.style.maxHeight = "0px";
+            tray.style.opacity = "0";
+            _secondaryTrayTimer = setTimeout(() => {
+                tray.classList.remove("is-open", "is-settled");
+                tray.style.width = "0px";
+                tray.style.maxHeight = "";
+                tray.style.opacity = "";
+                tray.style.overflow = "";
+                _secondaryTrayTimer = null;
+            }, 370);
+        } else {
+            // Single-row: kunci lebar aktual sebelum animasi tutup 600ms agar kereta mundur mulus tanpa lompatan
+            tray.classList.remove("is-settled");
+            tray.style.width = `${Math.min(Math.ceil(rect.width), availWidth)}px`;
+            tray.offsetWidth; // force reflow
+            tray.classList.remove("is-open");
+            tray.style.width = "0px";
+        }
     }
     btn.setAttribute("aria-expanded", String(isNowOpen));
     btn.classList.toggle("bg-blue-600", isNowOpen);
@@ -6197,7 +6260,6 @@ function toggleEditMode() {
                         </div>
                         <div class="sm:col-span-2">
                             <label class="block font-bold text-gray-700 dark:text-neutral-300 mb-1">Product Name <span class="text-red-500">*</span></label>
-... [truncated for diff preview]
                             <input type="text" id="edit_productName" value="${escapeHtmlAttr(p.name)}" data-ev-input="a145" placeholder="Enter product name..." class="w-full border dark:border-neutral-600 bg-white dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
                             <div id="editProductNameFeedback" class="hidden mt-1.5 text-[11px] px-2.5 py-1 rounded-md border"></div>
                         </div>
