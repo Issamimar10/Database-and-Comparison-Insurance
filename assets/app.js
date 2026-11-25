@@ -7403,7 +7403,9 @@ async function saveProductEdit() {
     const newChannel = document.getElementById("edit_channel").value.trim() || "-";
     const newCurr = document.getElementById("edit_currency").value.trim() || "-";
     const editLaunchEl = document.getElementById("edit_launchDate");
-    const newLaunchDate = (editLaunchEl && editLaunchEl.value) ? formatDateToDDMMYYYY(editLaunchEl.value) : (p.launchDate || "-");
+    const newLaunchDate = editLaunchEl
+        ? (editLaunchEl.value ? formatDateToDDMMYYYY(editLaunchEl.value) : "-")
+        : (p.launchDate || "-");
 
     const { updatedAttr, customNonBenefitsToRegister } = await collectAllDynamicFormData(detailBodyEl, newCategory);
 
