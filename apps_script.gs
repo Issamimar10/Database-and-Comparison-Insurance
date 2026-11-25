@@ -74,7 +74,8 @@ function getOrCreateRootDocFolder() {
 const RESERVED_SYSTEM_SHEETS_ = {
   "config": true,
   "users": true,
-  "documents": true
+  "documents": true,
+  "auditlog": true
 };
 const MAX_UPLOAD_BASE64_CHARS = 35 * 1024 * 1024; // ~25 MB biner
 const MAX_APPEND_ROWS = 2000;
@@ -105,6 +106,78 @@ const SESSION_REMEMBER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 function isReservedSystemSheet_(sheetName) {
   const lower = String(sheetName || "").trim().toLowerCase();
   return Boolean(lower && RESERVED_SYSTEM_SHEETS_[lower]);
+}
+
+// ====================================================
+// HELPER: ACTIVITY / AUDIT LOG RINGAN (TAB "AuditLog")
+// ====================================================
+const AUDIT_LOG_SHEET_NAME_ = "AuditLog";
+const AUDIT_LOG_HEADERS_ = ["Timestamp", "Username", "Role", "Action", "Target Tab", "Summary"];
+const AUDIT_LOG_MAX_ROWS_ = 2000;
+
+function ensureAuditLogSheet_(ss) {
+  let sh = ss.getSheetByName(AUDIT_LOG_SHEET_NAME_);
+  if (!sh) {
+    sh = ss.insertSheet(AUDIT_LOG_SHEET_NAME_);
+    const hdr = sh.getRange(1, 1, 1, AUDIT_LOG_HEADERS_.length);
+    hdr.setNumberFormat("@");
+    hdr.setValues([AUDIT_LOG_HEADERS_]);
+    hdr.setFontWeight("bold");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function appendAuditLog_(ss, session, actionType, targetTab, summary) {
+  try {
+    const sh = ensureAuditLogSheet_(ss);
+    const tz = Session.getScriptTimeZone() || "Asia/Jakarta";
+    const ts = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm:ss");
+    const uname = String((session && session.username) || "system").trim();
+    const role = String((session && session.role) || "unknown").trim().toUpperCase();
+    const row = sanitizeSheetRow_([
+      ts,
+      uname,
+      role,
+      String(actionType || "").trim().toUpperCase(),
+      String(targetTab || "-").trim(),
+      String(summary || "-").trim().substring(0, 500)
+    ]);
+    const nextRow = sh.getLastRow() + 1;
+    const rng = sh.getRange(nextRow, 1, 1, AUDIT_LOG_HEADERS_.length);
+    rng.setNumberFormat("@");
+    rng.setValues([row]);
+    if (nextRow > AUDIT_LOG_MAX_ROWS_ + 1) {
+      const excess = nextRow - (AUDIT_LOG_MAX_ROWS_ + 1);
+      if (excess > 0) sh.deleteRows(2, excess);
+    }
+  } catch (e) {
+    console.warn("appendAuditLog_ gagal:", e);
+  }
+}
+
+function readAuditLogEntries_(ss, limit) {
+  const maxItems = Math.min(200, Math.max(10, parseInt(limit, 10) || 100));
+  const sh = ss.getSheetByName(AUDIT_LOG_SHEET_NAME_);
+  if (!sh || sh.getLastRow() <= 1) return [];
+  const lastRow = sh.getLastRow();
+  const startRow = Math.max(2, lastRow - maxItems + 1);
+  const count = lastRow - startRow + 1;
+  const vals = sh.getRange(startRow, 1, count, AUDIT_LOG_HEADERS_.length).getDisplayValues();
+  const entries = [];
+  for (let i = vals.length - 1; i >= 0; i--) {
+    const r = vals[i];
+    if (!r[0] && !r[1] && !r[3]) continue;
+    entries.push({
+      timestamp: r[0] || "",
+      username: r[1] || "",
+      role: r[2] || "",
+      action: r[3] || "",
+      targetTab: r[4] || "-",
+      summary: r[5] || "-"
+    });
+  }
+  return entries;
 }
 
 function escapeHtmlServer_(str) {
@@ -1961,7 +2034,8 @@ function doPost(e) {
       "delete_document": true,
       "save_sheet_category_config": true,
       "manage_benefit_aliases": true,
-      "admin_manage_users": true
+      "admin_manage_users": true,
+      "admin_get_audit_log": true
     };
 
     const reqAction = String((payload && payload.action) || "").trim();
@@ -2893,6 +2967,7 @@ function doPost(e) {
 
         uSheet.getRange(target.rowNum, 9).setNumberFormat("@").setValue(sanitizeSheetCell_(nextRole));
         revokeAllSessionsForUser_(targetUsername);
+        appendAuditLog_(getSs(), activeSession, "ROLE_CHANGE", "Users", "Changed \"" + target.username + "\": " + prevRole + " -> " + nextRole);
         const selfDemoted = (targetUsername === actorLower && nextRole !== "admin");
         return jsonResponse({
           status: "success",
@@ -2916,6 +2991,7 @@ function doPost(e) {
         }
         uSheet.deleteRow(target.rowNum);
         revokeAllSessionsForUser_(targetUsername);
+        appendAuditLog_(getSs(), activeSession, "DELETE_USER", "Users", "Deleted user \"" + target.username + "\" (" + target.role + ")");
         try {
           const c = CacheService.getScriptCache();
           c.remove("USER_ROW_IDX_" + shortCacheHash_(targetUsername));
@@ -2925,6 +3001,12 @@ function doPost(e) {
       }
 
       return jsonResponse({ status: "error", message: "Operasi admin_manage_users tidak dikenali." });
+    }
+
+    // 0F. ACTION: ADMIN_GET_AUDIT_LOG (Khusus Admin: baca 100 catatan aktivitas terbaru dari tab AuditLog)
+    if (payload.action === "admin_get_audit_log") {
+      const entries = readAuditLogEntries_(getSs(), payload.limit || 100);
+      return jsonResponse({ status: "success", action: "admin_get_audit_log", entries: entries });
     }
 
     // 0C. ACTION: AUTH_REQUEST_OTP (Kirim Kode OTP 6 Digit ke Email — Anti-Enumerasi & Global Rate Limit)
@@ -3399,6 +3481,10 @@ function doPost(e) {
       });
 
       invalidateSummaryCache_();
+      const delCount = Array.isArray(payload.items) ? payload.items.length : 0;
+      const delTabs = Object.keys(affectedSheets).join(", ") || "-";
+      const delSamples = (payload.items || []).slice(0, 3).map(function(it) { return String((it && it.productName) || ""); }).filter(Boolean).join(", ");
+      appendAuditLog_(getSs(), activeSession, "DELETE_PRODUCT", delTabs, "Deleted " + delCount + " product(s)" + (delSamples ? " (" + delSamples + (delCount > 3 ? ", ..." : "") + ")" : ""));
       return jsonResponse({ status: "success", action: "delete" });
     }
 
@@ -3413,6 +3499,10 @@ function doPost(e) {
 
     if (payload.action === "manage_benefit_aliases") {
       const result = manageBenefitAliases_(getSs(), payload);
+      const opName = String(payload.op || "list").trim().toLowerCase();
+      if (opName === "upsert" || opName === "delete") {
+        appendAuditLog_(getSs(), activeSession, "CONFIG_ALIAS", "Config", (opName === "delete" ? "Deleted alias \"" : "Saved alias \"") + String(payload.canonical || "") + "\"");
+      }
       return jsonResponse({
         status: "success",
         action: "manage_benefit_aliases",
@@ -3426,6 +3516,7 @@ function doPost(e) {
     // ====================================================
     if (payload.action === "save_sheet_category_config") {
       const updatedConfig = saveSheetCategoryConfig_(getSs(), payload);
+      appendAuditLog_(getSs(), activeSession, "CONFIG_CATEGORY", String(payload.sheetName || "Config"), "Updated category settings for \"" + String(payload.sheetName || "") + "\"");
       return jsonResponse({
         status: "success",
         action: "save_sheet_category_config",
@@ -3507,6 +3598,8 @@ function doPost(e) {
       }
 
       invalidateSummaryCache_();
+      const sampleNames = rowsToWrite.slice(0, 3).map(function(r) { return String(r[0] || ""); }).filter(Boolean).join(", ");
+      appendAuditLog_(getSs(), activeSession, "UPLOAD_EXCEL", payload.sheetName, "Uploaded " + rowsToWrite.length + " product(s)" + (sampleNames ? " (" + sampleNames + (rowsToWrite.length > 3 ? ", ..." : "") + ")" : ""));
 
       return jsonResponse({ status: "success", action: "append" });
     }
@@ -3537,6 +3630,7 @@ function doPost(e) {
 
       cleanupEmptyBenefitColumns(sheet);
       invalidateSummaryCache_();
+      appendAuditLog_(getSs(), activeSession, rowIndex !== -1 ? "EDIT_PRODUCT" : "ADD_MANUAL", payload.sheetName, (rowIndex !== -1 ? "Updated \"" : "Added \"") + String(payload.productName || "") + "\"");
 
       return jsonResponse({ status: "success", action: "update" });
     }
@@ -3579,8 +3673,7 @@ function convertOfficeFileToPdfBlob(file) {
     throw new Error("Format file tidak didukung untuk konversi PDF: " + (ext || origMime));
   }
 
-  // 1. Bersihkan cache PDF lama secara otomatis (maksimal 1x per hari) lalu cek cache
-  maybeCleanupPdfPreviewCacheDaily_();
+  // 1. Cek cache PDF preview (pembersihan rutin dijalankan oleh Trigger harian clearAllPdfPreviewCacheDaily)
   const cacheName = "pdfprev_" + file.getId() + "_" + file.getLastUpdated().getTime() + ".pdf";
   const cacheFolder = getPdfPreviewCacheFolder_();
   const cached = cacheFolder.getFilesByName(cacheName);
@@ -3682,20 +3775,6 @@ function getPdfPreviewCacheFolder_() {
   const it = rootFolder.getFoldersByName(folderName);
   if (it.hasNext()) return it.next();
   return rootFolder.createFolder(folderName);
-}
-
-// Pembersihan otomatis ringan maksimal 1x per hari (tanpa perlu setup Trigger manual)
-function maybeCleanupPdfPreviewCacheDaily_() {
-  try {
-    const props = PropertiesService.getScriptProperties();
-    const todayKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "Asia/Jakarta", "yyyy-MM-dd");
-    const lastDay = props.getProperty("LAST_PDF_CACHE_CLEANUP_DAY");
-    if (lastDay === todayKey) return;
-    props.setProperty("LAST_PDF_CACHE_CLEANUP_DAY", todayKey);
-    cleanupPdfPreviewCache(24);
-  } catch (e) {
-    console.warn("Gagal cek pembersihan cache PDF harian:", e);
-  }
 }
 
 // Hapus isi file cache PDF yang berumur >= maxAgeHours (default 24 jam).

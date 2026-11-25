@@ -7594,6 +7594,12 @@ function onUploadTargetSheetChange() {
     const selectEl = document.getElementById("uploadTargetSheet");
     const val = selectEl ? selectEl.value : "Konven";
     updateUploadModalTheme(val);
+    if (typeof renderUploadTemplateInfoPanel === "function") {
+        const panel = document.getElementById("uploadTemplateInfoPanel");
+        if (panel && !panel.classList.contains("hidden")) {
+            renderUploadTemplateInfoPanel();
+        }
+    }
 
     // Sinkronkan ke tab manual
     const manualCat = document.getElementById("manual_category");
@@ -9167,7 +9173,7 @@ function applyDynamicConfigFromBackend(cfg) {
     if (Array.isArray(cfg.tabs) && cfg.tabs.length > 0) {
         SHEET_TABS = cfg.tabs.filter(t => {
             const lw = String(t || "").trim().toLowerCase();
-            return lw && lw !== "config" && lw !== "documents" && lw !== "users";
+            return lw && lw !== "config" && lw !== "documents" && lw !== "users" && lw !== "auditlog";
         });
     } else if (!Array.isArray(SHEET_TABS) || SHEET_TABS.length === 0) {
         SHEET_TABS = [...DEFAULT_SHEET_TABS];
@@ -11810,3 +11816,332 @@ async function deleteAdminUser(username) {
         }
     }
 }
+
+// ====================================================
+// ADMIN PANEL: ACTIVITY / AUDIT LOG TAB
+// ====================================================
+let adminAuditLogEntries = [];
+
+function switchAdminModalTab(tab) {
+    const isAudit = tab === "audit";
+    const usersBtn = document.getElementById("adminTabUsersBtn");
+    const auditBtn = document.getElementById("adminTabAuditBtn");
+    const roleHint = document.getElementById("adminUsersRoleHint");
+    const usersList = document.getElementById("adminUsersList");
+    const auditPanel = document.getElementById("adminAuditLogPanel");
+    const activeCls = "px-3 py-2 font-bold border-b-2 border-amber-500 text-amber-700 dark:text-amber-300 flex items-center gap-1.5 transition";
+    const inactiveCls = "px-3 py-2 font-semibold border-b-2 border-transparent text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 flex items-center gap-1.5 transition";
+
+    if (usersBtn) usersBtn.className = isAudit ? inactiveCls : activeCls;
+    if (auditBtn) auditBtn.className = isAudit ? activeCls : inactiveCls;
+    if (roleHint) roleHint.classList.toggle("hidden", isAudit);
+    if (usersList) usersList.classList.toggle("hidden", isAudit);
+    if (auditPanel) auditPanel.classList.toggle("hidden", !isAudit);
+
+    if (isAudit) {
+        loadAdminAuditLog();
+    } else {
+        const infoEl = document.getElementById("adminUsersCountInfo");
+        if (infoEl) infoEl.textContent = `${adminUsersEntries.length} registered user(s)`;
+    }
+}
+
+async function loadAdminAuditLog() {
+    const panel = document.getElementById("adminAuditLogPanel");
+    const infoEl = document.getElementById("adminUsersCountInfo");
+    if (!panel) return;
+    panel.innerHTML = `<div class="py-10 text-center text-gray-500 dark:text-neutral-400"><i class="fa-solid fa-circle-notch fa-spin text-lg text-amber-500 mb-2"></i><p>Loading activity log...</p></div>`;
+    if (infoEl) infoEl.textContent = "Loading activity log...";
+    try {
+        const res = await postAuthenticatedAppsScript({ action: "admin_get_audit_log", limit: 100 });
+        adminAuditLogEntries = Array.isArray(res.entries) ? res.entries : [];
+        renderAdminAuditLogList();
+    } catch (err) {
+        console.error("Failed to load audit log:", err);
+        panel.innerHTML = `<div class="py-8 text-center text-red-500 text-xs">Failed to load Activity Log: ${escapeHtml(err.message || err)}</div>`;
+        if (infoEl) infoEl.textContent = "Error loading log";
+    }
+}
+
+function renderAdminAuditLogList() {
+    const panel = document.getElementById("adminAuditLogPanel");
+    const infoEl = document.getElementById("adminUsersCountInfo");
+    if (!panel) return;
+    if (infoEl) infoEl.textContent = `Showing latest ${adminAuditLogEntries.length} activity log(s)`;
+    if (adminAuditLogEntries.length === 0) {
+        panel.innerHTML = `<div class="py-10 text-center text-gray-400 dark:text-neutral-500">No activity recorded in AuditLog yet.</div>`;
+        return;
+    }
+    const actionColor = (act) => {
+        const a = String(act || "").toUpperCase();
+        if (a.includes("DELETE")) return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
+        if (a.includes("UPLOAD") || a.includes("ADD")) return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
+        if (a.includes("ROLE")) return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+        if (a.includes("CONFIG")) return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
+        return "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300";
+    };
+    panel.innerHTML = adminAuditLogEntries.map(e => `
+        <div class="p-2.5 rounded-xl border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/70 flex flex-col gap-1">
+            <div class="flex flex-wrap items-center justify-between gap-1.5">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="px-2 py-0.5 rounded font-bold text-[10px] ${actionColor(e.action)}">${escapeHtml(e.action)}</span>
+                    <span class="font-bold text-gray-800 dark:text-neutral-100">${escapeHtml(e.username)}</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-600 dark:text-neutral-300 font-semibold">${escapeHtml(e.role)}</span>
+                    <span class="text-[11px] text-blue-600 dark:text-blue-400 font-medium">&bull; ${escapeHtml(e.targetTab)}</span>
+                </div>
+                <span class="text-[10px] font-mono text-gray-400 dark:text-neutral-500">${escapeHtml(e.timestamp)}</span>
+            </div>
+            <p class="text-[11px] text-gray-600 dark:text-neutral-300 break-words">${escapeHtml(e.summary)}</p>
+        </div>
+    `).join("");
+}
+
+// ====================================================
+// DYNAMIC UPLOAD EXCEL TEMPLATE (100% COMPATIBLE PER CATEGORY)
+// ====================================================
+function buildUploadTemplateRowsForCategory(categoryName) {
+    const cat = String(categoryName || "Conventional").trim() || "Conventional";
+    const isDplk = /^dplk$/i.test(cat);
+    const isSharia = /^(sharia|syariah)$/i.test(cat);
+    const catCfg = (typeof getCategorySchemaConfig === "function") ? getCategorySchemaConfig(cat) : { generalProvisions: [], specialProvisions: [], productSections: [] };
+
+    const rows = [];
+    // 1. Core Identity
+    rows.push({ label: "Company Name", sample: isDplk ? "DPLK Astra" : (isSharia ? "Allianz" : "Astra Life"), group: "core" });
+    if (!isDplk) {
+        rows.push({ label: "Product Name", sample: `Contoh Produk ${cat} 1`, group: "core" });
+    }
+    rows.push({ label: "Category System", sample: cat, group: "core" });
+    rows.push({ label: "Launch Date", sample: "01-01-2026", group: "core" });
+    rows.push({ label: "Distribution Channel", sample: isDplk ? "Corporate" : "Bancassurance", group: "core" });
+    if (!isDplk) {
+        rows.push({ label: "Product Type", sample: isSharia ? "Endowment" : "Whole Life", group: "core" });
+        rows.push({ label: "Par/Non Par", sample: "Non Par", group: "core" });
+    }
+    rows.push({ label: "Currency", sample: "IDR", group: "core" });
+
+    // 2. General Provisions (from Category Config)
+    const genList = (Array.isArray(catCfg.generalProvisions) && catCfg.generalProvisions.length > 0)
+        ? catCfg.generalProvisions
+        : (isDplk ? ["Entry Age", "Min Premium"] : ["Entry Age", "Coverage Period", "Premium Payment Period (PPP)", "Underwriting Method", "Min Premium", "Min Sum Assured", "Available Riders"]);
+    const genSamples = {
+        "entry age": "Policyholder: min 18 yo | Insured: 1 month - 60 yo",
+        "coverage period": "Until age 99 / 20 years",
+        "premium payment period (ppp)": "5, 10, or 15 years",
+        "underwriting method": "Full Underwriting / SIO / GIO",
+        "min premium": "IDR 5,000,000 / year",
+        "min sum assured": "IDR 100,000,000",
+        "available riders": "-"
+    };
+    genList.forEach(gp => {
+        if (!gp) return;
+        rows.push({ label: gp, sample: genSamples[gp.toLowerCase()] || "-", group: "general" });
+    });
+
+    // 3. Special Provisions (Category-Specific Non-Benefit from Config)
+    const specials = Array.isArray(catCfg.specialProvisions) ? catCfg.specialProvisions : [];
+    if (specials.length > 0) {
+        rows.push({ label: "Special Provisions", sample: "", group: "section" });
+        specials.forEach(sp => {
+            if (!sp || !sp.name) return;
+            const hint = sp.allowImage ? "(Teks atau tempel gambar tabel/grafik langsung di sel ini)" : "-";
+            rows.push({ label: sp.name, sample: hint, group: "special" });
+        });
+    }
+
+    // 4. Product Benefits
+    rows.push({ label: "Product Benefits", sample: "", group: "section" });
+    if (isDplk) {
+        const dplkBens = (Array.isArray(DPLK_BENEFIT_RULES) && DPLK_BENEFIT_RULES.length > 0)
+            ? DPLK_BENEFIT_RULES.map(r => r.canonical).filter(Boolean)
+            : ["Pensiun Normal", "Pensiun Dipercepat", "Pensiun Ditunda", "Pensiun Cacat / Disabilitas", "Pensiun Meninggal Dunia"];
+        dplkBens.slice(0, 8).forEach((b, idx) => {
+            rows.push({ label: b, sample: idx < 3 ? "✓" : "-", group: "benefit" });
+        });
+        // Charges section for DPLK
+        rows.push({ label: "Charges", sample: "", group: "section" });
+        const dplkChg = (Array.isArray(DPLK_CHARGE_RULES) && DPLK_CHARGE_RULES.length > 0)
+            ? DPLK_CHARGE_RULES.map(r => r.canonical).filter(Boolean)
+            : ["Biaya Pendaftaran", "Biaya Pengelolaan Investasi", "Biaya Administrasi Kepesertaan"];
+        dplkChg.slice(0, 8).forEach(c => {
+            rows.push({ label: c, sample: "-", group: "charge" });
+        });
+    } else {
+        const cfgBens = (Array.isArray(BENEFIT_CONFIG_CANONICAL_LIST) && BENEFIT_CONFIG_CANONICAL_LIST.length > 0)
+            ? BENEFIT_CONFIG_CANONICAL_LIST
+            : ["Death Benefit", "Accidental Death Benefit", "Total and Permanent Disability Benefit", "Critical Illness Benefit", "Maturity Benefit", "Living Benefit"];
+        cfgBens.forEach((b, idx) => {
+            rows.push({ label: b, sample: idx === 0 ? "100% Sum Assured" : "-", group: "benefit" });
+        });
+        rows.push({ label: "Additional Benefit", sample: "-", group: "benefit" });
+    }
+
+    return rows;
+}
+
+function toggleUploadTemplateInfoPanel() {
+    const panel = document.getElementById("uploadTemplateInfoPanel");
+    const btn = document.getElementById("btnUploadTemplateInfo");
+    if (!panel) return;
+    const isNowOpen = panel.classList.toggle("hidden") === false;
+    if (btn) btn.setAttribute("aria-expanded", String(isNowOpen));
+    if (isNowOpen) {
+        renderUploadTemplateInfoPanel();
+    }
+}
+
+function renderUploadTemplateInfoPanel() {
+    const cat = document.getElementById("uploadTargetSheet")?.value || "Conventional";
+    const badge = document.getElementById("uploadTemplateCatBadge");
+    const dlText = document.getElementById("btnDownloadUploadTemplateText");
+    const previewEl = document.getElementById("uploadTemplatePreviewRows");
+    const safeFileCat = cat.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "");
+    if (badge) badge.textContent = cat;
+    if (dlText) dlText.textContent = `Download Template_${safeFileCat}.xlsx`;
+    if (!previewEl) return;
+
+    const rows = buildUploadTemplateRowsForCategory(cat);
+    previewEl.innerHTML = `
+        <table class="w-full text-left border-collapse text-[11px]">
+            <thead class="sticky top-0 bg-gray-100 dark:bg-neutral-900 border-b border-gray-200 dark:border-neutral-700 text-gray-500 dark:text-neutral-400">
+                <tr>
+                    <th class="px-2 py-1 w-8 text-center border-r dark:border-neutral-700">#</th>
+                    <th class="px-2 py-1 w-44 border-r dark:border-neutral-700">Kolom A (Label)</th>
+                    <th class="px-2 py-1">Kolom B (Contoh Produk 1)</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-neutral-700/70">
+                ${rows.map((r, i) => {
+                    const cls = r.group === "section"
+                        ? "bg-sky-50 dark:bg-sky-950/40 font-bold text-sky-800 dark:text-sky-300"
+                        : (r.group === "special" ? "bg-emerald-50/60 dark:bg-emerald-950/20" : "");
+                    return `<tr class="${cls}">
+                        <td class="px-2 py-1 text-center font-mono text-gray-400 border-r dark:border-neutral-700">${i + 1}</td>
+                        <td class="px-2 py-1 font-semibold text-gray-800 dark:text-neutral-200 border-r dark:border-neutral-700">${escapeHtml(r.label)}</td>
+                        <td class="px-2 py-1 text-gray-600 dark:text-neutral-300">${escapeHtml(r.sample)}</td>
+                    </tr>`;
+                }).join("")}
+            </tbody>
+        </table>
+    `;
+}
+
+async function downloadUploadExcelTemplate(btnEl) {
+    const cat = document.getElementById("uploadTargetSheet")?.value || "Conventional";
+    const safeFileCat = cat.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const origHtml = btnEl ? btnEl.innerHTML : "";
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating...`;
+    }
+    try {
+        await loadExcelLibs();
+        const rows = buildUploadTemplateRowsForCategory(cat);
+        const aoa = rows.map(r => [r.label, r.sample, ""]);
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws["!cols"] = [{ wch: 32 }, { wch: 46 }, { wch: 36 }];
+
+        rows.forEach((r, idx) => {
+            const addrA = XLSX.utils.encode_cell({ r: idx, c: 0 });
+            const addrB = XLSX.utils.encode_cell({ r: idx, c: 1 });
+            const addrC = XLSX.utils.encode_cell({ r: idx, c: 2 });
+            const isSection = r.group === "section";
+            const isCore = r.group === "core";
+            const fillHex = isSection ? "1E3A5F" : (isCore ? "EFF6FF" : (r.group === "special" ? "ECFDF5" : "F8FAFC"));
+            const fontCol = isSection ? "FFFFFF" : "0F172A";
+            if (ws[addrA]) {
+                ws[addrA].s = {
+                    font: { bold: true, color: { rgb: fontCol }, sz: 10 },
+                    fill: { fgColor: { rgb: fillHex } },
+                    alignment: { vertical: "center", wrapText: true }
+                };
+            }
+            [addrB, addrC].forEach(addr => {
+                if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+                ws[addr].s = {
+                    font: { bold: isSection, color: { rgb: isSection ? "FFFFFF" : "1E293B" }, sz: 10 },
+                    fill: isSection ? { fgColor: { rgb: "1E3A5F" } } : undefined,
+                    alignment: { vertical: "center", wrapText: true }
+                };
+            });
+        });
+
+        const wb = XLSX.utils.book_new();
+        const sheetTitle = cat.replace(/[:\\/?*\[\]]/g, " ").trim().substring(0, 31) || "Template";
+        XLSX.utils.book_append_sheet(wb, ws, sheetTitle);
+        XLSX.writeFile(wb, `Template_Upload_${safeFileCat}.xlsx`);
+        showToast(`Downloaded Template_Upload_${safeFileCat}.xlsx`, "success");
+    } catch (err) {
+        console.error("Failed to generate Excel template:", err);
+        showToast("Failed to generate template: " + (err.message || err), "error");
+    } finally {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = origHtml;
+        }
+    }
+}
+
+// ====================================================
+// STRICT-CSP WHEEL (CTRL+SCROLL) & SMARTPHONE PINCH-TO-ZOOM
+// ====================================================
+(function initZoomGesturesForLightboxAndComparison() {
+    function bindZoomGestures(el, getScale, applyScale, wheelStep) {
+        if (!el) return;
+        // 1. Desktop Ctrl + Scroll (or Mac Cmd + Scroll / Trackpad Pinch)
+        el.addEventListener("wheel", (event) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            event.preventDefault();
+            const delta = event.deltaY < 0 ? wheelStep : -wheelStep;
+            applyScale(getScale() + delta);
+        }, { passive: false });
+
+        // 2. Smartphone 2-Finger Pinch-to-Zoom
+        let pinchStartDist = 0;
+        let pinchStartScale = 1;
+        const getTouchDist = (t1, t2) => Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+        el.addEventListener("touchstart", (event) => {
+            if (event.touches && event.touches.length === 2) {
+                pinchStartDist = getTouchDist(event.touches[0], event.touches[1]);
+                pinchStartScale = getScale();
+            }
+        }, { passive: true });
+
+        el.addEventListener("touchmove", (event) => {
+            if (event.touches && event.touches.length === 2 && pinchStartDist > 0) {
+                event.preventDefault();
+                const dist = getTouchDist(event.touches[0], event.touches[1]);
+                const ratio = dist / pinchStartDist;
+                applyScale(pinchStartScale * ratio);
+            }
+        }, { passive: false });
+
+        el.addEventListener("touchend", (event) => {
+            if (!event.touches || event.touches.length < 2) {
+                pinchStartDist = 0;
+            }
+        }, { passive: true });
+    }
+
+    const setup = () => {
+        bindZoomGestures(
+            document.getElementById("imageLightboxViewport"),
+            () => currentLightboxScale,
+            (s) => applyLightboxZoom(s),
+            0.15
+        );
+        bindZoomGestures(
+            document.getElementById("modalTableContainer"),
+            () => currentCompareTableZoom,
+            (s) => applyCompareTableZoom(s),
+            0.1
+        );
+    };
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", setup);
+    } else {
+        setup();
+    }
+})();
