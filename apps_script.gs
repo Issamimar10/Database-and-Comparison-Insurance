@@ -2967,7 +2967,7 @@ function doPost(e) {
 
         uSheet.getRange(target.rowNum, 9).setNumberFormat("@").setValue(sanitizeSheetCell_(nextRole));
         revokeAllSessionsForUser_(targetUsername);
-        appendAuditLog_(getSs(), activeSession, "ROLE_CHANGE", "Users", "Changed \"" + target.username + "\": " + prevRole + " -> " + nextRole);
+        appendAuditLog_(getSs(), activeSession, "ROLE_CHANGE", "Users", "Changed \"" + target.username + "\": " + target.role + " -> " + nextRole);
         const selfDemoted = (targetUsername === actorLower && nextRole !== "admin");
         return jsonResponse({
           status: "success",
