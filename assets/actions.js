@@ -19,7 +19,7 @@ function idcmUnescapeJsStr(s) {
 }
 
 const IDCM_ACTIONS = {
-  a1(el, event, args) { toggleTheme() },
+  a1(el, event, args) { toggleTheme(event, el) },
   a2(el, event, args) { switchAuthTab('signin') },
   a3(el, event, args) { switchAuthTab('signup') },
   a4(el, event, args) { handleSignInSubmit(event) },
@@ -196,7 +196,8 @@ const IDCM_ACTIONS = {
   a175(el, event, args) { setDeckPageSize(el.value) },
   a176(el, event, args) { goToComparePage(args[0]) },
   a177(el, event, args) { setComparePageSize(el.value) },
-  a178(el, event, args) { toggleDesktopSecondaryFilters(event) }
+  a178(el, event, args) { toggleDesktopSecondaryFilters(event) },
+  a179(el, event, args) { toggleUiAnimations() }
 };
 
 (function initIdcmEventDelegation() {

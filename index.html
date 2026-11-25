@@ -319,7 +319,7 @@
                 <div class="flex items-center gap-1 sm:gap-2 shrink-0">
                     <!-- Dark / Light Mode Toggle Button -->
                     <button data-ev-click="a1" id="themeToggleBtn" aria-label="Toggle Dark or Light Mode"
-                        class="bg-blue-800 hover:bg-blue-700 dark:bg-[#0a1128] dark:hover:bg-[#121c3d] text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-blue-700 dark:border-neutral-700 shrink-0"
+                        class="bg-blue-800 hover:bg-blue-700 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-blue-700 dark:border-neutral-700 shrink-0"
                         title="Switch to Dark Mode">
                         <span id="themeIcon" class="flex items-center justify-center">
                             <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-6 sm:h-6" aria-hidden="true">
@@ -340,6 +340,13 @@
                                 </g>
                             </svg>
                         </span>
+                    </button>
+
+                    <!-- Global Animations ON/OFF Toggle Button (Icon-Only, right beside Theme Toggle) -->
+                    <button data-ev-click="a179" id="animToggleBtn" aria-label="Toggle UI Animations" aria-pressed="true"
+                        class="bg-blue-800 hover:bg-blue-700 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-white w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shadow-sm transition border border-blue-700 dark:border-neutral-700 shrink-0"
+                        title="Animations: ON (Click to disable)">
+                        <i id="animToggleIcon" class="fa-solid fa-wand-magic-sparkles text-xs sm:text-sm" aria-hidden="true"></i>
                     </button>
 
                     <!-- Refresh Data Button -->
