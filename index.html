@@ -670,6 +670,13 @@
                     <label class="block text-xs font-bold text-gray-700 dark:text-neutral-300 mb-1">Target Google
                         Sheets Tab:</label>
                     <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" id="btnUploadTemplateInfo" data-ev-click="a180"
+                            aria-expanded="false" aria-controls="uploadTemplateInfoPanel"
+                            aria-label="Upload Excel Template & Format Guide"
+                            title="Lihat format & download template Excel 100% compatible untuk kategori ini"
+                            class="modal-touch-btn w-10 h-10 rounded-lg border border-sky-300 dark:border-sky-600/70 bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60 flex items-center justify-center shrink-0 transition shadow-sm">
+                            <i class="fa-solid fa-circle-info text-base" aria-hidden="true"></i>
+                        </button>
                         <select id="uploadTargetSheet" data-ev-change="a45"
                             class="flex-1 min-w-[160px] sm:min-w-[180px] border dark:border-neutral-600 text-xs sm:text-sm rounded-lg p-2.5 bg-gray-50 dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 focus:ring-2 focus:ring-sky-500 outline-none transition">
                             <option value="Conventional">Conventional</option>
@@ -693,6 +700,27 @@
                             title="View, edit, or delete Benefit & Non-Benefit aliases in Config">
                             <i class="fa-solid fa-tags" aria-hidden="true"></i> Manage Aliases
                         </button>
+                    </div>
+                    <!-- Collapsible Upload Template & Format Guide Panel (toggled by (i) button) -->
+                    <div id="uploadTemplateInfoPanel" class="hidden mt-2.5 rounded-xl border border-sky-200 dark:border-sky-800/70 bg-sky-50/50 dark:bg-neutral-900/70 overflow-hidden text-xs">
+                        <div class="px-3 py-2 bg-sky-100/70 dark:bg-neutral-800 border-b border-sky-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2">
+                            <div class="font-bold text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
+                                <i class="fa-solid fa-file-excel text-emerald-600 dark:text-emerald-400" aria-hidden="true"></i>
+                                <span>Template Upload:</span>
+                                <span id="uploadTemplateCatBadge" class="px-2 py-0.5 rounded bg-sky-600 text-white text-[11px]">Conventional</span>
+                            </div>
+                            <button type="button" id="btnDownloadUploadTemplate" data-ev-click="a181"
+                                class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition flex items-center gap-1.5 shadow-sm">
+                                <i class="fa-solid fa-download" aria-hidden="true"></i>
+                                <span id="btnDownloadUploadTemplateText">Download Template (.xlsx)</span>
+                            </button>
+                        </div>
+                        <div class="p-2.5 space-y-2">
+                            <p class="text-[11px] text-gray-600 dark:text-neutral-300">
+                                Template ini dibuat otomatis dari <strong>Config</strong> kategori terpilih (<strong>0 pending review</strong> saat di-upload ulang). Isi produk baru mulai dari <strong>Kolom B, C, D, dst.</strong> — format tanggal <code>DD-MM-YYYY</code>, dan gambar tabel bisa langsung ditempel di sel.
+                            </p>
+                            <div id="uploadTemplatePreviewRows" class="max-h-44 overflow-y-auto rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -865,10 +893,21 @@
                 <button type="button" data-ev-click="a62" aria-label="Close user manager"
                     class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-300 hover:text-white hover:bg-neutral-700 text-xl leading-none shrink-0">&times;</button>
             </div>
-            <div class="px-3 sm:px-4 py-2.5 bg-amber-50/70 dark:bg-neutral-900/70 border-b dark:border-neutral-700 text-[11px] text-gray-700 dark:text-neutral-300">
+            <div class="px-3 sm:px-4 pt-2.5 pb-0 bg-gray-50 dark:bg-neutral-900/70 border-b dark:border-neutral-700 flex items-center gap-2 text-xs">
+                <button type="button" id="adminTabUsersBtn" data-ev-click="a182"
+                    class="px-3 py-2 font-bold border-b-2 border-amber-500 text-amber-700 dark:text-amber-300 flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-users" aria-hidden="true"></i> Users &amp; Roles
+                </button>
+                <button type="button" id="adminTabAuditBtn" data-ev-click="a183"
+                    class="px-3 py-2 font-semibold border-b-2 border-transparent text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Activity Log
+                </button>
+            </div>
+            <div id="adminUsersRoleHint" class="px-3 sm:px-4 py-2 bg-amber-50/70 dark:bg-neutral-900/50 border-b dark:border-neutral-700 text-[11px] text-gray-700 dark:text-neutral-300">
                 <strong>Viewer:</strong> lihat, filter, compare &amp; download &bull; <strong>Editor:</strong> + tambah/edit produk &amp; upload dokumen &bull; <strong>Admin:</strong> akses penuh (hapus, config, kelola user). Mengubah role otomatis me-logout sesi aktif user tersebut.
             </div>
             <div id="adminUsersList" class="p-3 sm:p-4 overflow-y-auto flex-1 space-y-2 text-xs"></div>
+            <div id="adminAuditLogPanel" class="hidden p-3 sm:p-4 overflow-y-auto flex-1 space-y-2 text-xs"></div>
             <div class="p-3 sm:p-4 bg-gray-50 dark:bg-neutral-900/60 border-t dark:border-neutral-700 flex justify-between items-center gap-2 text-[11px] text-gray-500 dark:text-neutral-400">
                 <span id="adminUsersCountInfo">Loading...</span>
                 <button type="button" data-ev-click="a62"
@@ -1141,7 +1180,7 @@
             <!-- Comparison Column Pagination Bar (otomatis tampil jika produk dibandingkan > pageSize) -->
             <div id="comparePaginationBar" class="hidden px-3 sm:px-5 py-2 bg-slate-100 dark:bg-neutral-900 border-b border-gray-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0"></div>
             <div class="p-2 sm:p-4 overflow-x-auto overflow-y-auto flex-1" id="modalTableContainer" tabindex="0"
-                role="region" aria-labelledby="compareModalTitle" onwheel="handleCompareTableWheel(event)"></div>
+                role="region" aria-labelledby="compareModalTitle"></div>
         </div>
     </dialog>
 
@@ -1241,7 +1280,7 @@
                     </button>
                 </div>
             </div>
-            <div id="imageLightboxViewport" onwheel="handleLightboxWheel(event)"
+            <div id="imageLightboxViewport"
                 class="flex-1 w-full h-full overflow-auto bg-white rounded-xl p-2 sm:p-3 shadow-inner border border-gray-300 flex justify-center items-start">
                 <img id="imageLightboxTarget" src="" alt="Table Preview" class="block rounded select-none"
                     style="image-rendering: -webkit-optimize-contrast;">

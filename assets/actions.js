@@ -197,7 +197,11 @@ const IDCM_ACTIONS = {
   a176(el, event, args) { goToComparePage(args[0]) },
   a177(el, event, args) { setComparePageSize(el.value) },
   a178(el, event, args) { toggleDesktopSecondaryFilters(event) },
-  a179(el, event, args) { toggleUiAnimations() }
+  a179(el, event, args) { toggleUiAnimations() },
+  a180(el, event, args) { toggleUploadTemplateInfoPanel() },
+  a181(el, event, args) { downloadUploadExcelTemplate(el) },
+  a182(el, event, args) { switchAdminModalTab('users') },
+  a183(el, event, args) { switchAdminModalTab('audit') }
 };
 
 (function initIdcmEventDelegation() {
