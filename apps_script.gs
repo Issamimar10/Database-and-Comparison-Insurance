@@ -3673,8 +3673,7 @@ function convertOfficeFileToPdfBlob(file) {
     throw new Error("Format file tidak didukung untuk konversi PDF: " + (ext || origMime));
   }
 
-  // 1. Bersihkan cache PDF lama secara otomatis (maksimal 1x per hari) lalu cek cache
-  maybeCleanupPdfPreviewCacheDaily_();
+  // 1. Cek cache PDF preview (pembersihan rutin dijalankan oleh Trigger harian clearAllPdfPreviewCacheDaily)
   const cacheName = "pdfprev_" + file.getId() + "_" + file.getLastUpdated().getTime() + ".pdf";
   const cacheFolder = getPdfPreviewCacheFolder_();
   const cached = cacheFolder.getFilesByName(cacheName);
@@ -3776,20 +3775,6 @@ function getPdfPreviewCacheFolder_() {
   const it = rootFolder.getFoldersByName(folderName);
   if (it.hasNext()) return it.next();
   return rootFolder.createFolder(folderName);
-}
-
-// Pembersihan otomatis ringan maksimal 1x per hari (tanpa perlu setup Trigger manual)
-function maybeCleanupPdfPreviewCacheDaily_() {
-  try {
-    const props = PropertiesService.getScriptProperties();
-    const todayKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "Asia/Jakarta", "yyyy-MM-dd");
-    const lastDay = props.getProperty("LAST_PDF_CACHE_CLEANUP_DAY");
-    if (lastDay === todayKey) return;
-    props.setProperty("LAST_PDF_CACHE_CLEANUP_DAY", todayKey);
-    cleanupPdfPreviewCache(24);
-  } catch (e) {
-    console.warn("Gagal cek pembersihan cache PDF harian:", e);
-  }
 }
 
 // Hapus isi file cache PDF yang berumur >= maxAgeHours (default 24 jam).
